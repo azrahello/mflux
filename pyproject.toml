@@ -55,8 +55,9 @@ homepage = "https://github.com/filipstrand/mflux"
 
 [project.scripts]
 mflux-generate = "mflux.generate:main"
-mflux-save = "mflux.save:main"
 mflux-generate-controlnet = "mflux.generate_controlnet:main"
+mflux-save = "mflux.save:main"
+mflux-train = "mflux.train:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

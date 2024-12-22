@@ -43,7 +43,7 @@ class WeightHandler:
         clip_encoder, _ = WeightHandler._load_clip_encoder(root_path=root_path)
         t5_encoder, _ = WeightHandler._load_t5_encoder(root_path=root_path)
         vae, _ = WeightHandler._load_vae(root_path=root_path)
-        transformer, quantization_level = WeightHandler.load_transformer(root_path=root_path)
+        transformer, quantization_level, _ = WeightHandler.load_transformer(root_path=root_path)
         return WeightHandler(
             clip_encoder=clip_encoder,
             t5_encoder=t5_encoder,
@@ -90,7 +90,7 @@ class WeightHandler:
         return weights, quantization_level
 
     @staticmethod
-    def load_transformer(root_path: Path | None = None, lora_path: str | None = None) -> (dict, int):
+    def load_transformer(root_path: Path | None = None, lora_path: str | None = None) -> (dict, int, str | None):
         weights, quantization_level, mflux_version = WeightHandler._get_weights("transformer", root_path, lora_path)
 
         if lora_path:
@@ -100,7 +100,7 @@ class WeightHandler:
 
         # Quantized weights (i.e. ones exported from this project) don't need any post-processing.
         if quantization_level or mflux_version:
-            return weights, quantization_level
+            return weights, quantization_level, mflux_version
 
         # Reshape and process the huggingface weights
         if "transformer_blocks" in weights:
@@ -115,7 +115,7 @@ class WeightHandler:
                         "linear1": block["ff_context"]["net"][0]["proj"],
                         "linear2": block["ff_context"]["net"][2],
                     }
-        return weights, quantization_level
+        return weights, quantization_level, mflux_version
 
     @staticmethod
     def _load_vae(root_path: Path) -> (dict, int):
@@ -139,7 +139,7 @@ class WeightHandler:
         model_name: str,
         root_path: Path | None = None,
         lora_path: str | None = None,
-    ) -> (dict, int, str):
+    ) -> (dict, int, str | None):
         weights = []
         quantization_level = None
         mflux_version = None

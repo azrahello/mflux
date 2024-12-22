@@ -22,7 +22,7 @@ class WeightHandlerLoRA:
         if lora_files:
             lora_scales = WeightHandlerLoRA._validate_lora_scales(lora_files, lora_scales)
             for lora_file, lora_scale in zip(lora_files, lora_scales):
-                weights, _ = WeightHandler.load_transformer(lora_path=lora_file)
+                weights, _, mflux_version = WeightHandler.load_transformer(lora_path=lora_file)
                 weights = dict(tree_flatten(weights))
                 weights = {key.removesuffix(".weight"): value for key, value in weights.items()}
                 weights = {f"transformer.{key}": value for key, value in weights.items()}
@@ -38,7 +38,7 @@ class WeightHandlerLoRA:
                         quantization_level=None,
                         scale=lora_scale,
                         is_lora=True,
-                        is_mflux=False,
+                        is_mflux=True if mflux_version is not None else False,
                     ),
                 )
                 lora_weights.append(weights)
