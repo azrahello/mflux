@@ -75,7 +75,7 @@ class GeneratedImage:
 
     @staticmethod
     def get_version() -> str:
-        version = GeneratedImage.get_version_from_toml()
+        version = GeneratedImage._get_version_from_toml()
         if version:
             return version
 
@@ -86,7 +86,7 @@ class GeneratedImage:
             return "unknown"
 
     @staticmethod
-    def get_version_from_toml() -> str | None:
+    def _get_version_from_toml() -> str | None:
         # Search for pyproject.toml by traversing up from the current working directory
         current_dir = pathlib.Path(__file__).resolve().parent
         for parent in current_dir.parents:

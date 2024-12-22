@@ -27,12 +27,16 @@ class Plotter:
         ax = plt.gca()
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
-        # Dynamic x-axis limit with 30% padding
+        # Dynamic x-axis limit with 20% padding
         max_x = max(stats.steps)
-        padding = max_x * 0.3
+        padding = max_x * 0.2
         plt.xlim(0, max_x + padding)
 
-        plt.ylim(0, 1.5)
+        # Dynamic y-axis limit with 20% padding
+        max_y = max(stats.losses)
+        padding = max_y * 0.2
+        plt.ylim(0, max_y + padding)
+
         plt.legend(fontsize=12)
 
         # Add margins for better visibility

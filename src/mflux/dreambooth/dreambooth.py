@@ -40,7 +40,7 @@ class DreamBooth:
 
         # Training loop
         for batch in batches:
-            # Perform one gradient updates on the LoRA the weights
+            # Perform one gradient update on the LoRA the weights
             loss, grads = train_step_function(batch)
             training_state.optimizer.optimizer.update(model=flux, gradients=grads)
             del loss, grads
