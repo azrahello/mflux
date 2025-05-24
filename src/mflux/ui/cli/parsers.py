@@ -71,10 +71,15 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--steps", type=int, default=None, help="Inference Steps")
         self.add_argument("--guidance", type=float, default=ui_defaults.GUIDANCE_SCALE, help=f"Guidance Scale (Default is {ui_defaults.GUIDANCE_SCALE})")
 
+
+
     def add_image_generator_arguments(self, supports_metadata_config=False) -> None:
         prompt_group = self.add_mutually_exclusive_group(required=(not supports_metadata_config))
         prompt_group.add_argument("--prompt", type=str, help="The textual description of the image to generate.")
+        #prompt_group.add_argument("--clip", type=str, default = None,  help="can emproove generation quality")
         prompt_group.add_argument("--prompt-file", type=Path, help="Path to a file containing the prompt text. The file will be re-read before each generation, allowing you to edit the prompt between iterations when using multiple seeds without restarting the program.")
+        #clip is optional, but if provided, it will be used to emproove generation quality
+        self.add_argument("--clip", type=str, default = None,  help="can emproove generation quality")
         self.add_argument("--seed", type=int, default=None, nargs='+', help="Specify 1+ Entropy Seeds (Default is 1 time-based random-seed)")
         self.add_argument("--auto-seeds", type=int, default=-1, help="Auto generate N Entropy Seeds (random ints between 0 and 1 billion")
         self._add_image_generator_common_arguments()
@@ -84,7 +89,7 @@ class CommandLineParser(argparse.ArgumentParser):
     def add_image_to_image_arguments(self, required=False) -> None:
         self.supports_image_to_image = True
         self.add_argument("--image-path", type=Path, required=required, default=None, help="Local path to init image")
-        self.add_argument("--image-strength", type=float, required=False, default=ui_defaults.IMAGE_STRENGTH, help=f"Controls how strongly the init image influences the output image. A value of 0.0 means no influence. (Default is {ui_defaults.IMAGE_STRENGTH})")
+        self.add_argument("--image-strength", type=float, required=False, default=ui_defaults.IMAGE_STRENGTH, help=f"Controls how strongly th e init image influences the output image. A value of 0.0 means no influence. (Default is {ui_defaults.IMAGE_STRENGTH})")
 
     def add_batch_image_generator_arguments(self) -> None:
         self.add_argument("--batch-prompts-file", type=Path, required=True, default=argparse.SUPPRESS, help="Local path for a file that holds a batch of prompts.")
@@ -154,6 +159,10 @@ class CommandLineParser(argparse.ArgumentParser):
 
             if namespace.prompt is None:
                 namespace.prompt = prior_gen_metadata.get("prompt", None)
+
+            if namespace.clip is  None:
+                namespace.prompt = prior_gen_metadata.get("clip", None)
+
 
             # all configs from the metadata config defers to any explicitly defined args
             guidance_default = self.get_default("guidance")
@@ -226,6 +235,10 @@ class CommandLineParser(argparse.ArgumentParser):
         if self.supports_image_generation and namespace.prompt is None and namespace.prompt_file is None:
             # when metadata config is supported but neither prompt nor prompt-file is provided
             self.error("Either --prompt or --prompt-file argument is required, or 'prompt' required in metadata config file")
+
+        if self.supports_image_generation:
+            if namespace.prompt is None and namespace.clip is None and not namespace.prompt_file:
+                self.error("Either --prompt, --clip, or a prompt file is required")
 
         if self.supports_image_generation and namespace.steps is None:
             namespace.steps = ui_defaults.MODEL_INFERENCE_STEPS.get(namespace.model, 14)

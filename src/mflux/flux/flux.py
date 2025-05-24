@@ -47,9 +47,23 @@ class Flux1(nn.Module):
     def generate_image(
         self,
         seed: int,
-        prompt: str,
+        prompts: dict,
         config: Config,
     ) -> GeneratedImage:
+        if not isinstance(prompts, dict):
+            prompts = {"prompt_t5": str(prompts), "prompt_clip": None}
+
+        prompt_t5 = prompts.get("prompt_t5")
+        if not prompt_t5:
+            raise ValueError("'prompt' is required.")
+
+        prompt_clip = prompts.get("prompt_clip", None)
+        if prompt_clip is not None and not isinstance(prompt_clip, str):
+            raise TypeError("'prompt_clip' must be a string or None.")
+
+        if not isinstance(prompt_t5, str):
+            prompt_t5 = str(prompt_t5)
+
         # 0. Create a new runtime config based on the model type and input parameters
         config = RuntimeConfig(config, self.model_config)
         time_steps = tqdm(range(config.init_time_step, config.num_inference_steps))
@@ -69,7 +83,7 @@ class Flux1(nn.Module):
 
         # 2. Encode the prompt
         prompt_embeds, pooled_prompt_embeds = PromptEncoder.encode_prompt(
-            prompt=prompt,
+            prompts=prompts,
             prompt_cache=self.prompt_cache,
             t5_tokenizer=self.t5_tokenizer,
             clip_tokenizer=self.clip_tokenizer,
@@ -80,7 +94,7 @@ class Flux1(nn.Module):
         # (Optional) Call subscribers for beginning of loop
         Callbacks.before_loop(
             seed=seed,
-            prompt=prompt,
+            prompt=prompts,
             latents=latents,
             config=config,
         )
@@ -104,7 +118,7 @@ class Flux1(nn.Module):
                 Callbacks.in_loop(
                     t=t,
                     seed=seed,
-                    prompt=prompt,
+                    prompt=prompts,
                     latents=latents,
                     config=config,
                     time_steps=time_steps,
@@ -117,7 +131,7 @@ class Flux1(nn.Module):
                 Callbacks.interruption(
                     t=t,
                     seed=seed,
-                    prompt=prompt,
+                    prompt=prompts,
                     latents=latents,
                     config=config,
                     time_steps=time_steps,
@@ -127,7 +141,7 @@ class Flux1(nn.Module):
         # (Optional) Call subscribers after loop
         Callbacks.after_loop(
             seed=seed,
-            prompt=prompt,
+            prompt=prompts,
             latents=latents,
             config=config,
         )
@@ -139,7 +153,7 @@ class Flux1(nn.Module):
             decoded_latents=decoded,
             config=config,
             seed=seed,
-            prompt=prompt,
+            prompt=prompts,
             quantization=self.bits,
             lora_paths=self.lora_paths,
             lora_scales=self.lora_scales,

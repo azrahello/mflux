@@ -9,25 +9,44 @@ from mflux.tokenizer.t5_tokenizer import TokenizerT5
 class PromptEncoder:
     @staticmethod
     def encode_prompt(
-        prompt: str,
+        prompts: dict,
         prompt_cache: dict[str, tuple[mx.array, mx.array]],
         t5_tokenizer: TokenizerT5,
         clip_tokenizer: TokenizerCLIP,
         t5_text_encoder: T5Encoder,
         clip_text_encoder: CLIPEncoder,
     ) -> tuple[mx.array, mx.array]:
-        # 1. Return prompt encodings if already cached
-        if prompt in prompt_cache:
-            return prompt_cache[prompt]
+        prompt_t5 = prompts.get("prompt_t5")
+        if not prompt_t5:
+            raise ValueError("'prompt_t5' is required.")
 
-        # 1. Encode the prompt
-        t5_tokens = t5_tokenizer.tokenize(prompt)
-        clip_tokens = clip_tokenizer.tokenize(prompt)
-        prompt_embeds = t5_text_encoder(t5_tokens)
-        pooled_prompt_embeds = clip_text_encoder(clip_tokens)
+        prompt_clip = prompts.get("prompt_clip", None)
+        if prompt_clip is not None and not isinstance(prompt_clip, str):
+            raise TypeError("'prompt_clip' must be a string or None.")
 
-        # 2. Cache the encoded prompt
-        prompt_cache[prompt] = (prompt_embeds, pooled_prompt_embeds)
+        if not isinstance(prompt_t5, str):
+            prompt_t5 = str(prompt_t5)
 
-        # 3. Return prompt encodings
+        if prompt_clip is not None and not isinstance(prompt_clip, str):
+            raise TypeError("'prompt_clip' must be a string or None.")
+
+        if prompt_t5:
+            t5_tokens = t5_tokenizer.tokenize(prompt_t5)
+            prompt_embeds = t5_text_encoder(t5_tokens)
+        else:
+            prompt_embeds = None
+
+        if prompt_clip is not None:
+            clip_tokens = clip_tokenizer.tokenize(prompt_clip)
+            pooled_prompt_embeds = clip_text_encoder(clip_tokens)
+        else:
+            if prompt_t5 is not None:
+                # Use the same prompt for CLIP if 'prompt_clip' is not provided
+                clip_tokens = clip_tokenizer.tokenize(prompt_t5)
+                pooled_prompt_embeds = clip_text_encoder(clip_tokens)
+            else:
+                pooled_prompt_embeds = None
+
+        # store results in cache
+        prompt_cache[str(prompts)] = (prompt_embeds, pooled_prompt_embeds)
         return prompt_embeds, pooled_prompt_embeds
