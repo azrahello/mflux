@@ -1,5 +1,4 @@
 from argparse import Namespace
-
 from pathlib import Path
 
 from mflux import Config, ModelConfig, StopImageGenerationException
@@ -71,6 +70,11 @@ def _register_callbacks(args: Namespace, flux: Flux1Redux) -> MemorySaver | None
     # Battery saver
     battery_saver = BatterySaver(battery_percentage_stop_limit=args.battery_percentage_stop_limit)
     CallbackRegistry.register_before_loop(battery_saver)
+
+    # VAE Tiling
+    if args.vae_tiling:
+        flux.vae.decoder.enable_tiling = True
+        flux.vae.decoder.split_direction = args.vae_tiling_split
 
     # Stepwise Handler
     if args.stepwise_image_output_dir:
