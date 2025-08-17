@@ -30,6 +30,7 @@ class GeneratedImage:
         depth_image_path: str | Path | None = None,
         redux_image_paths: list[str] | list[Path] | None = None,
         redux_image_strengths: list[float] | None = None,
+        redux_mode: str | None = None,
         concept_heatmap: ConceptHeatmap | None = None,
     ):
         self.image = image
@@ -51,6 +52,7 @@ class GeneratedImage:
         self.depth_image_path = depth_image_path
         self.redux_image_paths = redux_image_paths
         self.redux_image_strengths = redux_image_strengths
+        self.redux_mode = redux_mode
         self.concept_heatmap = concept_heatmap
 
     def get_right_half(self) -> "GeneratedImage":
@@ -77,6 +79,9 @@ class GeneratedImage:
             image_strength=self.image_strength,
             masked_image_path=self.masked_image_path,
             depth_image_path=self.depth_image_path,
+            redux_image_paths=self.redux_image_paths,
+            redux_image_strengths=self.redux_image_strengths,
+            redux_mode=self.redux_mode,
             concept_heatmap=self.concept_heatmap,
         )
 
@@ -150,5 +155,6 @@ class GeneratedImage:
             "depth_image_path": str(self.depth_image_path) if self.depth_image_path else None,
             "redux_image_paths": str(self.redux_image_paths) if self.redux_image_paths else None,
             "redux_image_strengths": self._format_redux_strengths(),
+            "redux_mode": self.redux_mode,
             "prompt": self.prompt,
         }

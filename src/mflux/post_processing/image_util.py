@@ -32,6 +32,7 @@ class ImageUtil:
         image_path: str | Path | None = None,
         redux_image_paths: list[str] | list[Path] | None = None,
         redux_image_strengths: list[float] | None = None,
+        redux_mode: str | None = None,
         image_strength: float | None = None,
         masked_image_path: str | Path | None = None,
         depth_image_path: str | Path | None = None,
@@ -60,6 +61,7 @@ class ImageUtil:
             depth_image_path=depth_image_path,
             redux_image_paths=redux_image_paths,
             redux_image_strengths=redux_image_strengths,
+            redux_mode=redux_mode,
             concept_heatmap=concept_heatmap,
         )
 
