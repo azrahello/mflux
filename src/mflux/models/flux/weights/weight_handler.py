@@ -189,8 +189,15 @@ class WeightHandler:
                 data = mx.load(str(file), return_metadata=True)
                 weight = list(data[0].items())
                 if len(data) > 1:
-                    quantization_level = data[1].get("quantization_level")
+                    quantization_level_str = data[1].get("quantization_level")
                     mflux_version = data[1].get("mflux_version")
+
+                    # Parse quantization_level: metadata stores it as string, convert to int
+                    if quantization_level_str and quantization_level_str != "None":
+                        try:
+                            quantization_level = int(quantization_level_str)
+                        except ValueError:
+                            pass  # Keep as None if conversion fails
                 weights.extend(weight)
 
         if lora_path and root_path is None:

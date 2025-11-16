@@ -184,7 +184,16 @@ class QwenWeightHandler:
         if file_glob:
             data = mx.load(str(file_glob[0]), return_metadata=True)
             if len(data) > 1:
-                quantization_level = data[1].get("quantization_level")
+                quantization_level_str = data[1].get("quantization_level")
                 mflux_version = data[1].get("mflux_version")
+
+                # Parse quantization_level: metadata stores it as string, convert to int
+                quantization_level = None
+                if quantization_level_str and quantization_level_str != "None":
+                    try:
+                        quantization_level = int(quantization_level_str)
+                    except ValueError:
+                        pass  # Keep as None if conversion fails
+
                 return quantization_level, mflux_version
         return None, None
