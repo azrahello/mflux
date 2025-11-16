@@ -191,7 +191,6 @@ class QwenModelSaver:
                 # arrays (dict(str, array)): The dictionary of names to arrays to be saved.
                 weight_shard,
                 # [save_safetensors] Metadata must be a dictionary with string keys and values
-                # i.e. 'None' and other special values are string-ified and need to be parsed by readers
                 {
                     "quantization_level": str(bits) if bits is not None else "None",
                     "mflux_version": VersionUtil.get_mflux_version(),
