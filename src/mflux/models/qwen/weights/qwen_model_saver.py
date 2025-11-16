@@ -29,11 +29,11 @@ class QwenModelSaver:
             QwenModelSaver._merge_loras_into_base_weights(model.text_encoder)
             # After baking, weights are de-quantized, so save without quantization metadata
             save_bits = None
-            print("⚠️ Model will be saved in de-quantized format (float16) with LoRAs baked in")
+            print("⚠️ Model will be saved in de-quantized format (bfloat16) with LoRAs baked in")
 
         # Save the models ONE AT A TIME with aggressive memory cleanup between
-        # NOTE: Models are saved in their current precision (bfloat16/float16)
-        # Quantization metadata is preserved for runtime loading
+        # NOTE: Models are saved in bfloat16 precision
+        # Quantization metadata is preserved for runtime loading (except when LoRAs are baked)
 
         print("\n💾 Saving VAE...")
         QwenModelSaver.save_weights(base_path, bits, model.vae, "vae")
@@ -52,7 +52,11 @@ class QwenModelSaver:
 
     @staticmethod
     def _merge_loras_into_base_weights(module: nn.Module):
-        """Merge LoRA weights into base Linear layers (W = W + (A @ B).T * scale) using MLX."""
+        """Merge LoRA weights into base Linear layers using W = W + (A @ B).T * scale.
+
+        Merged weights are converted to bfloat16 (model's default precision).
+        Memory is aggressively cleaned up after each layer to minimize peak usage.
+        """
         layers_merged = 0
 
         for name, child in module.named_modules():
@@ -65,19 +69,17 @@ class QwenModelSaver:
                 parent, attr = QwenModelSaver._get_parent_and_attr(module, name)
                 lin = child.linear
 
-                # Store original dtype to preserve precision
-                original_dtype = lin.weight.dtype if not isinstance(lin, nn.QuantizedLinear) else mx.float16
-
                 # W_merged = W_base + (A @ B).T * scale
                 # Note: Transpose needed because weight is (out_dims, in_dims) but A@B is (in_dims, out_dims)
                 update = mx.matmul(child.lora_A, child.lora_B).T * child.scale
                 merged_weight = lin.weight + update
 
-                # Preserve dtype to avoid float32 bloat
-                lin.weight = merged_weight.astype(original_dtype)
+                # Convert to bfloat16 (model's default precision)
+                lin.weight = merged_weight.astype(mx.bfloat16)
 
-                # Force evaluation to free computation graph
+                # Force evaluation and cleanup memory after each layer
                 mx.eval(lin.weight)
+                mx.clear_cache()
 
                 QwenModelSaver._set_module_attr(parent, attr, lin)
                 layers_merged += 1
@@ -86,25 +88,24 @@ class QwenModelSaver:
             elif isinstance(child, FusedLoRALinear):
                 parent, attr = QwenModelSaver._get_parent_and_attr(module, name)
 
-                # Store original dtype to preserve precision
-                original_dtype = (
-                    child.base_linear.weight.dtype
-                    if not isinstance(child.base_linear, nn.QuantizedLinear)
-                    else mx.float16
-                )
-
-                merged_update = mx.zeros_like(child.base_linear.weight)
+                # Start with base weight instead of zeros_like to save memory
+                merged_weight = child.base_linear.weight
 
                 for lora in child.loras:
                     # Note: Transpose needed because weight is (out_dims, in_dims) but A@B is (in_dims, out_dims)
-                    merged_update += lora.scale * mx.matmul(lora.lora_A, lora.lora_B).T
+                    lora_update = lora.scale * mx.matmul(lora.lora_A, lora.lora_B).T
+                    merged_weight = merged_weight + lora_update
 
-                # Bake into base weight and preserve dtype
-                merged_weight = child.base_linear.weight + merged_update
-                child.base_linear.weight = merged_weight.astype(original_dtype)
+                    # Free memory immediately after each LoRA
+                    del lora_update
+                    mx.clear_cache()
 
-                # Force evaluation to free computation graph
+                # Convert to bfloat16 (model's default precision)
+                child.base_linear.weight = merged_weight.astype(mx.bfloat16)
+
+                # Force evaluation and cleanup memory after each layer
                 mx.eval(child.base_linear.weight)
+                mx.clear_cache()
 
                 # Replace FusedLoRALinear with the clean base_linear to save memory
                 QwenModelSaver._set_module_attr(parent, attr, child.base_linear)
@@ -112,10 +113,8 @@ class QwenModelSaver:
 
         print(f"✅ Merged {layers_merged} LoRA layer(s) using W = W + (A @ B).T * scale")
 
+        # Final cleanup
         mx.clear_cache()
-        import gc
-
-        gc.collect()
 
     @staticmethod
     def _get_parent_and_attr(module: nn.Module, path: str):
