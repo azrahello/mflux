@@ -228,8 +228,8 @@ class QwenModelSaver:
             )
 
     @staticmethod
-    def _split_weights(base_path: str, weights: dict, max_file_size_gb: float = 0.5) -> list:
-        # Use smaller shards (512MB instead of 2GB) to reduce memory peaks during save
+    def _split_weights(base_path: str, weights: dict, max_file_size_gb: float = 2.0) -> list:
+        # Split weights into shards to avoid single large files
         max_file_size_bytes = int(max_file_size_gb * (1 << 30))
         shards = []
         shard, shard_size = {}, 0
