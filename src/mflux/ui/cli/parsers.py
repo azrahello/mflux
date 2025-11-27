@@ -108,7 +108,7 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--negative-prompt", type=str, default="", help="The negative prompt to guide what the model should not generate.")
         self.add_argument("--seed", type=int, default=None, nargs='+', help="Specify 1+ Entropy Seeds (Default is 1 time-based random-seed)")
         self.add_argument("--auto-seeds", type=int, default=-1, help="Auto generate N Entropy Seeds (random ints between 0 and 1 billion")
-        self.add_argument("--scheduler", type=str, default="linear", help="Choose from implemented schedulers: 'linear', 'flow_match_euler_discrete', 'ddim'. Or bring your own: 'your_package.some_module.FooScheduler'")
+        self.add_argument("--scheduler", type=str, default="linear", help="Scheduler: 'linear' (default), 'ddim' (2-3x faster, recommended), 'flow_match_euler_discrete'. Custom: 'your_package.module.CustomScheduler'")
         self._add_image_generator_common_arguments(supports_dimension_scale_factor=supports_dimension_scale_factor)
         if supports_metadata_config:
             self.add_metadata_config()
