@@ -1,9 +1,13 @@
+from .ddim_flow_scheduler import DDIMFlowScheduler
+from .ddim_scheduler import DDIMScheduler
 from .flow_match_euler_discrete_scheduler import FlowMatchEulerDiscreteScheduler
 from .linear_scheduler import LinearScheduler
 
 __all__ = [
     "LinearScheduler",
     "FlowMatchEulerDiscreteScheduler",
+    "DDIMScheduler",
+    "DDIMFlowScheduler",
 ]
 
 
@@ -21,6 +25,9 @@ SCHEDULER_REGISTRY = {
     "LinearScheduler": LinearScheduler,
     "flow_match_euler_discrete": FlowMatchEulerDiscreteScheduler,
     "FlowMatchEulerDiscreteScheduler": FlowMatchEulerDiscreteScheduler,
+    "ddim": DDIMFlowScheduler,  # Default to Flow Matching version
+    "DDIMScheduler": DDIMScheduler,  # Legacy DDPM version
+    "DDIMFlowScheduler": DDIMFlowScheduler,  # Explicit Flow Matching version
 }
 
 

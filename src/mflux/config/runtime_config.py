@@ -102,14 +102,17 @@ class RuntimeConfig:
         if self._scheduler is not None:
             return self._scheduler
 
+        # Get scheduler kwargs from config
+        scheduler_kwargs = self.config.scheduler_kwargs
+
         if self.config.scheduler_str == "linear":
-            self._scheduler = LinearScheduler(self)
+            self._scheduler = LinearScheduler(self, **scheduler_kwargs)
         elif (registered_scheduler := SCHEDULER_REGISTRY.get(self.config.scheduler_str, None)) is not None:
-            self._scheduler = registered_scheduler(self)
+            self._scheduler = registered_scheduler(self, **scheduler_kwargs)
         elif "." in self.config.scheduler_str:
             # this raises ValueError if scheduler is not importable
             scheduler_cls = try_import_external_scheduler(self.config.scheduler_str)
-            self._scheduler = scheduler_cls(self)
+            self._scheduler = scheduler_cls(self, **scheduler_kwargs)
         else:
             raise NotImplementedError(f"The scheduler {self.config.scheduler_str!r} is not implemented by mflux.")
 

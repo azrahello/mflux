@@ -23,6 +23,7 @@ class Config:
         masked_image_path: Path | None = None,
         controlnet_strength: float | None = None,
         scheduler: str = "linear",
+        scheduler_kwargs: dict | None = None,
     ):
         if width % 16 != 0 or height % 16 != 0:
             log.warning("Width and height should be multiples of 16. Rounding down.")
@@ -38,3 +39,4 @@ class Config:
         self.masked_image_path = masked_image_path
         self.controlnet_strength = controlnet_strength
         self.scheduler_str = scheduler
+        self.scheduler_kwargs = scheduler_kwargs or {}

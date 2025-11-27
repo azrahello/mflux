@@ -9,8 +9,9 @@ from mflux.schedulers.base_scheduler import BaseScheduler
 
 
 class LinearScheduler(BaseScheduler):
-    def __init__(self, runtime_config: "RuntimeConfig"):
+    def __init__(self, runtime_config: "RuntimeConfig", **kwargs):
         self.runtime_config = runtime_config
+        # LinearScheduler ignores extra kwargs for compatibility
         self._sigmas = self._get_sigmas()
         self._timesteps = self._get_timesteps()
 

@@ -10,9 +10,10 @@ from mflux.schedulers.base_scheduler import BaseScheduler
 
 
 class FlowMatchEulerDiscreteScheduler(BaseScheduler):
-    def __init__(self, runtime_config: "RuntimeConfig"):
+    def __init__(self, runtime_config: "RuntimeConfig", **kwargs):
         self.runtime_config = runtime_config
         self.model_config = runtime_config.model_config
+        # FlowMatchEulerDiscreteScheduler ignores extra kwargs for compatibility
         self.num_train_timesteps = 1000
         self.shift_terminal = 0.02
         self.base_shift = 0.5
