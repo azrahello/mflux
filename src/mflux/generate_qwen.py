@@ -23,6 +23,13 @@ def main():
     if args.guidance is None:
         args.guidance = ui_defaults.GUIDANCE_SCALE
 
+    # 0b. Parse scheduler kwargs if provided
+    scheduler_kwargs = None
+    if hasattr(args, "scheduler_kwargs") and args.scheduler_kwargs:
+        import json
+
+        scheduler_kwargs = json.loads(args.scheduler_kwargs)
+
     # 1. Load the model
     qwen = QwenImage(
         model_config=ModelConfig.from_name(model_name=args.model or "qwen-image", base_model=args.base_model),
@@ -50,6 +57,7 @@ def main():
                     image_path=args.image_path,
                     image_strength=args.image_strength,
                     scheduler=args.scheduler,
+                    scheduler_kwargs=scheduler_kwargs,
                 ),
             )
             # 4. Save the image

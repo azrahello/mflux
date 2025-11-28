@@ -50,6 +50,7 @@ class ImageUtil:
             steps=config.num_inference_steps,
             prompt=prompt,
             guidance=config.guidance,
+            scheduler=config.config.scheduler_str,
             precision=config.precision,
             quantization=quantization,
             generation_time=generation_time,

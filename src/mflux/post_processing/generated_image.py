@@ -23,6 +23,7 @@ class GeneratedImage:
         generation_time: float,
         lora_paths: list[str],
         lora_scales: list[float],
+        scheduler: str | None = None,
         height: int | None = None,
         width: int | None = None,
         controlnet_image_path: str | Path | None = None,
@@ -43,6 +44,7 @@ class GeneratedImage:
         self.prompt = prompt
         self.steps = steps
         self.guidance = guidance
+        self.scheduler = scheduler
         self.precision = precision
         self.quantization = quantization
         self.generation_time = generation_time
@@ -75,6 +77,7 @@ class GeneratedImage:
             prompt=self.prompt,
             steps=self.steps,
             guidance=self.guidance,
+            scheduler=self.scheduler,
             precision=self.precision,
             quantization=self.quantization,
             generation_time=self.generation_time,
@@ -148,6 +151,7 @@ class GeneratedImage:
             "seed": self.seed,
             "steps": self.steps,
             "guidance": self.guidance if self.model_config.supports_guidance else None,
+            "scheduler": self.scheduler,
             "height": self.height,
             "width": self.width,
             "precision": str(self.precision),

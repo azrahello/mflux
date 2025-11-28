@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/alessandrorizzo/miniconda3/bin/mflux-generate", line 5, in <module>
+    from mflux.generate import main
+  File "/Users/alessandrorizzo/mflux/src/mflux/generate.py", line 6, in <module>
+    from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
+  File "/Users/alessandrorizzo/mflux/src/mflux/models/qwen/variants/txt2img/qwen_image.py", line 13, in <module>
+    from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
+  File "/Users/alessandrorizzo/mflux/src/mflux/models/qwen/model/qwen_transformer/qwen_transformer.py", line 11, in <module>
+    from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import QwenTransformerBlock
+  File "/Users/alessandrorizzo/mflux/src/mflux/models/qwen/model/qwen_transformer/qwen_transformer_block.py", line 6, in <module>
+    from mflux.models.qwen.model.qwen_transformer.qwen_attention import QwenAttention
+  File "/Users/alessandrorizzo/mflux/src/mflux/models/qwen/model/qwen_transformer/qwen_attention.py", line 40
+    self._call_count += 1
+        ^
+SyntaxError: invalid syntax

@@ -109,6 +109,7 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--seed", type=int, default=None, nargs='+', help="Specify 1+ Entropy Seeds (Default is 1 time-based random-seed)")
         self.add_argument("--auto-seeds", type=int, default=-1, help="Auto generate N Entropy Seeds (random ints between 0 and 1 billion")
         self.add_argument("--scheduler", type=str, default="linear", help="Scheduler: 'linear' (default), 'ddim' (2-3x faster, recommended), 'flow_match_euler_discrete'. Custom: 'your_package.module.CustomScheduler'")
+        self.add_argument("--scheduler-kwargs", type=str, default=None, help="JSON string of scheduler parameters. Example: '{\"beta_schedule\": \"cosine\", \"timestep_spacing\": \"trailing\"}'")
         self._add_image_generator_common_arguments(supports_dimension_scale_factor=supports_dimension_scale_factor)
         if supports_metadata_config:
             self.add_metadata_config()
