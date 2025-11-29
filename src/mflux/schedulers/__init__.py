@@ -1,5 +1,6 @@
 from .ddim_flow_scheduler import DDIMFlowScheduler
 from .er_sde_beta_scheduler import ERSDEBetaScheduler
+from .flow_match_advanced_scheduler import FlowMatchAdvancedScheduler
 from .flow_match_euler_discrete_scheduler import FlowMatchEulerDiscreteScheduler
 from .linear_scheduler import LinearScheduler
 
@@ -8,6 +9,7 @@ __all__ = [
     "FlowMatchEulerDiscreteScheduler",
     "DDIMFlowScheduler",
     "ERSDEBetaScheduler",
+    "FlowMatchAdvancedScheduler",
 ]
 
 
@@ -29,6 +31,8 @@ SCHEDULER_REGISTRY = {
     "DDIMFlowScheduler": DDIMFlowScheduler,
     "er_sde_beta": ERSDEBetaScheduler,  # ER-SDE with Beta timestep distribution
     "ERSDEBetaScheduler": ERSDEBetaScheduler,
+    "advanced": FlowMatchAdvancedScheduler,  # Advanced schedules (Beta, Tangent, Karras, Linear)
+    "FlowMatchAdvancedScheduler": FlowMatchAdvancedScheduler,
 }
 
 
