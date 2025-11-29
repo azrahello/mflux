@@ -107,48 +107,160 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
 
     def _beta_schedule(self, num_steps: int) -> list[float]:
         """
-        Beta distribution timestep schedule.
+        Beta distribution timestep schedule using Newton-Raphson approximation.
 
         Based on arXiv:2407.12173 and ComfyUI implementation.
-        Uses Beta(α, β) distribution to concentrate timesteps at edges
-        for better structure and detail preservation.
+        Uses Beta(α, β) distribution to concentrate timesteps at edges.
 
-        This implements the inverse CDF (ppf) of the Beta distribution.
+        Implements inverse CDF (ppf) of Beta distribution without scipy dependency.
         """
         # Generate uniform samples in reverse order (1 → 0)
-        # This gives us high noise → low noise distribution
         uniform_samples = [1.0 - (i / num_steps) for i in range(num_steps + 1)]
 
-        # Compute beta ppf for each uniform sample
-        # Using incomplete beta function approximation
         timesteps = []
-        for u in uniform_samples:
-            if u <= 0.0:
+        for p in uniform_samples:
+            if p <= 0.0:
                 t = 0.0
-            elif u >= 1.0:
+            elif p >= 1.0:
                 t = 1.0
             else:
-                # Use incomplete beta inverse (ppf)
-                # This is an approximation using scipy for now
-                # In production, use a pure Python/MLX implementation
-                try:
-                    from scipy import stats
-
-                    t = float(stats.beta.ppf(u, self.beta_alpha, self.beta_beta))
-                except ImportError:
-                    # Fallback: Use simple power transformation approximation
-                    # Not exact but avoids scipy dependency
-                    # For Beta(α, β), approximate with power function
-                    if self.beta_alpha == self.beta_beta:
-                        # Symmetric case: use simple transformation
-                        t = u ** (1.0 / self.beta_alpha)
-                    else:
-                        # Asymmetric: use weighted power
-                        weight = self.beta_alpha / (self.beta_alpha + self.beta_beta)
-                        t = weight * (u ** (1.0 / self.beta_alpha)) + (1 - weight) * u
+                # Newton-Raphson iteration for Beta inverse CDF
+                # Find x such that I_x(α, β) = p
+                # where I_x is the regularized incomplete beta function
+                t = self._beta_ppf_newton(p, self.beta_alpha, self.beta_beta)
             timesteps.append(t)
 
         return timesteps
+
+    def _beta_ppf_newton(self, p: float, alpha: float, beta: float, tol: float = 1e-6, max_iter: int = 100) -> float:
+        """
+        Compute Beta distribution inverse CDF using Newton-Raphson.
+
+        Finds x such that CDF(x) = p, where CDF is the incomplete beta function.
+        """
+        # Initial guess using simple approximation
+        if alpha > 1 and beta > 1:
+            # Mode-based initial guess
+            x = (alpha - 1) / (alpha + beta - 2)
+        elif alpha <= 1 and beta > 1:
+            x = 0.1
+        elif alpha > 1 and beta <= 1:
+            x = 0.9
+        else:
+            x = 0.5
+
+        # Newton-Raphson iteration
+        for _ in range(max_iter):
+            # Compute CDF and PDF at current x
+            cdf = self._beta_cdf(x, alpha, beta)
+            pdf = self._beta_pdf(x, alpha, beta)
+
+            if abs(pdf) < 1e-10:
+                break
+
+            # Newton step: x_new = x - f(x)/f'(x)
+            # where f(x) = CDF(x) - p
+            x_new = x - (cdf - p) / pdf
+
+            # Clamp to [0, 1]
+            x_new = max(0.0, min(1.0, x_new))
+
+            if abs(x_new - x) < tol:
+                return x_new
+
+            x = x_new
+
+        return x
+
+    def _beta_cdf(self, x: float, alpha: float, beta: float) -> float:
+        """Regularized incomplete beta function (CDF of Beta distribution)."""
+        if x <= 0:
+            return 0.0
+        if x >= 1:
+            return 1.0
+
+        # Use continued fraction approximation
+        return self._incomplete_beta(x, alpha, beta)
+
+    def _beta_pdf(self, x: float, alpha: float, beta: float) -> float:
+        """PDF of Beta distribution."""
+        if x <= 0 or x >= 1:
+            return 0.0
+
+        # PDF: x^(α-1) * (1-x)^(β-1) / B(α,β)
+        # where B(α,β) is the beta function
+        log_pdf = (alpha - 1) * math.log(x) + (beta - 1) * math.log(1 - x)
+        log_beta = self._log_beta_function(alpha, beta)
+
+        return math.exp(log_pdf - log_beta)
+
+    def _log_beta_function(self, alpha: float, beta: float) -> float:
+        """Logarithm of Beta function using lgamma."""
+        return math.lgamma(alpha) + math.lgamma(beta) - math.lgamma(alpha + beta)
+
+    def _incomplete_beta(self, x: float, alpha: float, beta: float) -> float:
+        """
+        Regularized incomplete beta function using continued fraction.
+
+        This is a simplified implementation. For production use, consider
+        using scipy or a more robust numerical library.
+        """
+        # Symmetry transformation if needed
+        if x > (alpha + 1) / (alpha + beta + 2):
+            return 1.0 - self._incomplete_beta(1 - x, beta, alpha)
+
+        # Continued fraction expansion
+        bt = math.exp((alpha - 1) * math.log(x) + (beta - 1) * math.log(1 - x) - self._log_beta_function(alpha, beta))
+
+        if x < (alpha + 1) / (alpha + beta + 2):
+            # Use continued fraction directly
+            cf = self._beta_continued_fraction(x, alpha, beta)
+            return bt * cf / alpha
+        else:
+            # Use symmetry
+            cf = self._beta_continued_fraction(1 - x, beta, alpha)
+            return 1.0 - bt * cf / beta
+
+    def _beta_continued_fraction(self, x: float, alpha: float, beta: float, max_iter: int = 200) -> float:
+        """Evaluate continued fraction for incomplete beta function."""
+        qab = alpha + beta
+        qap = alpha + 1.0
+        qam = alpha - 1.0
+        c = 1.0
+        d = 1.0 - qab * x / qap
+
+        if abs(d) < 1e-30:
+            d = 1e-30
+        d = 1.0 / d
+        h = d
+
+        for m in range(1, max_iter):
+            m2 = 2 * m
+            aa = m * (beta - m) * x / ((qam + m2) * (alpha + m2))
+            d = 1.0 + aa * d
+            if abs(d) < 1e-30:
+                d = 1e-30
+            c = 1.0 + aa / c
+            if abs(c) < 1e-30:
+                c = 1e-30
+            d = 1.0 / d
+            h *= d * c
+
+            aa = -(alpha + m) * (qab + m) * x / ((alpha + m2) * (qap + m2))
+            d = 1.0 + aa * d
+            if abs(d) < 1e-30:
+                d = 1e-30
+            c = 1.0 + aa / c
+            if abs(c) < 1e-30:
+                c = 1e-30
+            d = 1.0 / d
+            delta = d * c
+            h *= delta
+
+            if abs(delta - 1.0) < 1e-7:
+                break
+
+        return h
 
     def _tangent_schedule(self, num_steps: int) -> list[float]:
         """
