@@ -109,26 +109,43 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
         """
         Beta distribution timestep schedule.
 
-        Based on arXiv:2407.12173 - concentrates timesteps at distribution edges
+        Based on arXiv:2407.12173 and ComfyUI implementation.
+        Uses Beta(α, β) distribution to concentrate timesteps at edges
         for better structure and detail preservation.
 
-        Uses inverse CDF (percent point function) of Beta(α, β) distribution.
+        This implements the inverse CDF (ppf) of the Beta distribution.
         """
-        try:
-            from scipy import stats
-        except ImportError:
-            raise ImportError("scipy is required for beta schedule. Install with: pip install scipy")
+        # Generate uniform samples in reverse order (1 → 0)
+        # This gives us high noise → low noise distribution
+        uniform_samples = [1.0 - (i / num_steps) for i in range(num_steps + 1)]
 
-        # Generate uniform samples
-        uniform_samples = [i / num_steps for i in range(num_steps + 1)]
-
-        # Apply inverse Beta CDF to get non-linear distribution
-        # Note: scipy.stats.beta.ppf expects values in [0, 1]
-        # We reverse (1 - x) because we want high noise first
+        # Compute beta ppf for each uniform sample
+        # Using incomplete beta function approximation
         timesteps = []
         for u in uniform_samples:
-            # ppf(1-u) gives us reversed distribution
-            t = stats.beta.ppf(1 - u, self.beta_alpha, self.beta_beta)
+            if u <= 0.0:
+                t = 0.0
+            elif u >= 1.0:
+                t = 1.0
+            else:
+                # Use incomplete beta inverse (ppf)
+                # This is an approximation using scipy for now
+                # In production, use a pure Python/MLX implementation
+                try:
+                    from scipy import stats
+
+                    t = float(stats.beta.ppf(u, self.beta_alpha, self.beta_beta))
+                except ImportError:
+                    # Fallback: Use simple power transformation approximation
+                    # Not exact but avoids scipy dependency
+                    # For Beta(α, β), approximate with power function
+                    if self.beta_alpha == self.beta_beta:
+                        # Symmetric case: use simple transformation
+                        t = u ** (1.0 / self.beta_alpha)
+                    else:
+                        # Asymmetric: use weighted power
+                        weight = self.beta_alpha / (self.beta_alpha + self.beta_beta)
+                        t = weight * (u ** (1.0 / self.beta_alpha)) + (1 - weight) * u
             timesteps.append(t)
 
         return timesteps
