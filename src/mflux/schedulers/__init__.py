@@ -31,7 +31,7 @@ SCHEDULER_REGISTRY = {
     "DDIMFlowScheduler": DDIMFlowScheduler,
     "er_sde_beta": ERSDEBetaScheduler,  # ER-SDE with Beta timestep distribution
     "ERSDEBetaScheduler": ERSDEBetaScheduler,
-    "advanced": FlowMatchAdvancedScheduler,  # Advanced schedules (Beta, Tangent, Karras, Linear)
+    "advanced": FlowMatchAdvancedScheduler,  # Cosine, Exponential, Sqrt, Scaled Linear, Beta schedules
     "FlowMatchAdvancedScheduler": FlowMatchAdvancedScheduler,
 }
 

@@ -1,13 +1,16 @@
 """
-Flow Matching Advanced Scheduler with Beta Timestep Distribution
+Flow Matching Advanced Scheduler with Multiple Noise Schedules
 
-Supports Beta distribution timestep schedules for Flow Matching models.
-Based on research and community-tested configurations from:
-- Beta Sampling (arXiv:2407.12173)
-- RES4LYF ComfyUI extension
+Supports various noise schedules for Flow Matching models:
+- Linear, Cosine, Exponential, Sqrt, Scaled Linear (simple, effective)
+- Beta distribution (complex, from arXiv:2407.12173)
 
-This scheduler separates TIMESTEP DISTRIBUTION from SAMPLING METHOD,
-following the ComfyUI paradigm where they are independent choices.
+Based on:
+- DDPM noise schedules (Cosine, Exponential, Sqrt, Scaled Linear)
+- Beta Sampling (arXiv:2407.12173, RES4LYF ComfyUI)
+
+This scheduler separates NOISE SCHEDULE from SAMPLING METHOD,
+allowing different timestep distributions with Euler integration.
 """
 
 import math
@@ -23,41 +26,42 @@ from mflux.schedulers.base_scheduler import BaseScheduler
 
 class FlowMatchAdvancedScheduler(BaseScheduler):
     """
-    Flow Matching scheduler with Beta distribution timestep schedules.
+    Flow Matching scheduler with multiple noise schedule options.
 
-    Separates timestep schedule (Beta or Linear) from sampling method
-    (Euler integration for Flow Matching).
+    Separates noise schedule from sampling method (Euler integration).
 
     Args:
         runtime_config: Runtime configuration
-        schedule: Timestep distribution to use
-                 - "linear": Uniform spacing (baseline)
-                 - "beta": Beta distribution (concentrates steps at edges)
+        schedule: Noise schedule type
+                 - "linear": Uniform spacing (baseline, fast)
+                 - "cosine": Smoother transitions, better perceptual quality
+                 - "exponential": Faster early denoising, refined details at end
+                 - "sqrt": Preserves structure, good detail in complex areas
+                 - "scaled_linear": Adaptive scaling for different image types
+                 - "beta": Beta distribution (complex, concentrates steps at edges)
+        exponential_beta: Beta parameter for exponential schedule (default: 5.0)
         beta_alpha: Alpha parameter for beta schedule (default: 0.6)
-                    Higher values → more steps at high noise (start of denoising)
         beta_beta: Beta parameter for beta schedule (default: 0.6)
-                   Higher values → more steps at low noise (end of denoising)
-
-    Popular Beta configurations:
-        - RES_2M: schedule="beta", beta_alpha=2.0, beta_beta=1.0
-                  (concentrates steps at beginning, better structure)
-        - Beta57: schedule="beta", beta_alpha=0.5, beta_beta=0.7
-                  (balanced distribution)
-        - Symmetric: schedule="beta", beta_alpha=0.6, beta_beta=0.6
-                     (default, similar to linear)
 
     Examples:
-        # RES_2M configuration (popular on Reddit/ComfyUI)
-        --scheduler advanced --scheduler-kwargs '{"schedule": "beta", "beta_alpha": 2.0, "beta_beta": 1.0}'
+        # Cosine (smooth, good perceptual quality)
+        --scheduler advanced --scheduler-kwargs '{"schedule": "cosine"}'
 
-        # More detail-focused (more steps at end)
-        --scheduler advanced --scheduler-kwargs '{"schedule": "beta", "beta_alpha": 1.0, "beta_beta": 2.0}'
+        # Exponential (fast early, refined end)
+        --scheduler advanced --scheduler-kwargs '{"schedule": "exponential"}'
+
+        # Sqrt (structure preservation)
+        --scheduler advanced --scheduler-kwargs '{"schedule": "sqrt"}'
+
+        # Beta RES_2M (from ComfyUI/Reddit)
+        --scheduler advanced --scheduler-kwargs '{"schedule": "beta", "beta_alpha": 2.0, "beta_beta": 1.0}'
     """
 
     def __init__(
         self,
         runtime_config: "RuntimeConfig",
-        schedule: Literal["linear", "beta"] = "linear",
+        schedule: Literal["linear", "cosine", "exponential", "sqrt", "scaled_linear", "beta"] = "linear",
+        exponential_beta: float = 5.0,
         beta_alpha: float = 0.6,
         beta_beta: float = 0.6,
         **kwargs,
@@ -65,6 +69,7 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
         self.runtime_config = runtime_config
         self.model_config = runtime_config.model_config
         self.schedule = schedule
+        self.exponential_beta = exponential_beta
         self.beta_alpha = beta_alpha
         self.beta_beta = beta_beta
 
@@ -78,6 +83,14 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
         # Generate normalized timesteps [0, 1] using selected schedule
         if self.schedule == "beta":
             timesteps_normalized = self._beta_schedule(num_steps)
+        elif self.schedule == "cosine":
+            timesteps_normalized = self._cosine_schedule(num_steps)
+        elif self.schedule == "exponential":
+            timesteps_normalized = self._exponential_schedule(num_steps)
+        elif self.schedule == "sqrt":
+            timesteps_normalized = self._sqrt_schedule(num_steps)
+        elif self.schedule == "scaled_linear":
+            timesteps_normalized = self._scaled_linear_schedule(num_steps)
         else:  # linear
             timesteps_normalized = self._linear_schedule(num_steps)
 
@@ -97,6 +110,114 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
     def _linear_schedule(self, num_steps: int) -> list[float]:
         """Linear (uniform) timestep distribution."""
         return [i / num_steps for i in range(num_steps + 1)]
+
+    def _cosine_schedule(self, num_steps: int) -> list[float]:
+        """
+        Cosine noise schedule.
+
+        Provides smoother transitions between noise levels using cosine function.
+        Often results in better perceptual quality.
+
+        Formula: cos(((t + s) / (1 + s)) * π/2)²
+        where s = 0.008 (small offset to avoid singularities)
+        """
+        import math
+
+        s = 0.008  # Small offset
+        timesteps = []
+
+        for i in range(num_steps + 1):
+            t = i / num_steps
+            # Cosine schedule: cos((t+s)/(1+s) * π/2)²
+            value = math.cos(((t + s) / (1.0 + s)) * math.pi * 0.5) ** 2
+            timesteps.append(value)
+
+        # Normalize to [0, 1]
+        first = timesteps[0]
+        timesteps = [t / first for t in timesteps]
+
+        # Invert so it goes from 0 to 1 (not 1 to 0)
+        timesteps = [1.0 - t for t in timesteps]
+
+        return timesteps
+
+    def _exponential_schedule(self, num_steps: int) -> list[float]:
+        """
+        Exponential noise schedule.
+
+        Accelerates denoising at the beginning and slows at the end for
+        more detail refinement.
+
+        Formula: exp(-beta * t)
+        """
+        import math
+
+        timesteps = []
+        for i in range(num_steps + 1):
+            t = i / num_steps
+            # Exponential decay
+            value = math.exp(-self.exponential_beta * t)
+            timesteps.append(value)
+
+        # Normalize to [0, 1]
+        first = timesteps[0]
+        last = timesteps[-1]
+        timesteps = [(t - last) / (first - last) for t in timesteps]
+
+        return timesteps
+
+    def _sqrt_schedule(self, num_steps: int) -> list[float]:
+        """
+        Square root noise schedule.
+
+        Helps preserve global structure while ensuring good detail
+        preservation in complex areas.
+
+        Formula: sqrt(1 - t)
+        """
+        import math
+
+        timesteps = []
+        for i in range(num_steps + 1):
+            t = i / num_steps
+            # Square root transformation
+            value = math.sqrt(1.0 - t)
+            timesteps.append(value)
+
+        # Invert so it goes from 0 to 1
+        timesteps = [1.0 - t for t in timesteps]
+
+        return timesteps
+
+    def _scaled_linear_schedule(self, num_steps: int) -> list[float]:
+        """
+        Scaled linear noise schedule.
+
+        Adaptive scaling for different image types. Used in Stable Diffusion.
+        Slower initial denoising and faster final denoising.
+
+        Formula: (sqrt(beta_start) to sqrt(beta_end))²
+        """
+        import math
+
+        # Standard beta values from Stable Diffusion
+        beta_start = 0.00085
+        beta_end = 0.012
+
+        timesteps = []
+        for i in range(num_steps + 1):
+            t = i / num_steps
+            # Scaled linear: interpolate sqrt of betas, then square
+            sqrt_beta = math.sqrt(beta_start) + t * (math.sqrt(beta_end) - math.sqrt(beta_start))
+            beta = sqrt_beta**2
+            timesteps.append(beta)
+
+        # Normalize to [0, 1]
+        first = timesteps[0]
+        last = timesteps[-1]
+        timesteps = [(t - first) / (last - first) for t in timesteps]
+
+        return timesteps
 
     def _beta_schedule(self, num_steps: int) -> list[float]:
         """
