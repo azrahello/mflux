@@ -148,21 +148,19 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
         Accelerates denoising at the beginning and slows at the end for
         more detail refinement.
 
-        Formula: exp(-beta * t)
+        Uses a gentler exponential curve that's more compatible with Flow Matching.
         """
-        import math
 
         timesteps = []
         for i in range(num_steps + 1):
             t = i / num_steps
-            # Exponential decay
-            value = math.exp(-self.exponential_beta * t)
+            # Gentler exponential: use (1 - t)^beta instead of exp(-beta*t)
+            # This gives more control and better convergence
+            value = (1.0 - t) ** self.exponential_beta
             timesteps.append(value)
 
-        # Normalize to [0, 1]
-        first = timesteps[0]
-        last = timesteps[-1]
-        timesteps = [(t - last) / (first - last) for t in timesteps]
+        # These values go from 1.0 to 0.0, need to invert for timesteps
+        timesteps = [1.0 - t for t in timesteps]
 
         return timesteps
 
