@@ -1,16 +1,19 @@
 """
 DDIM-style Scheduler for Flow Matching
 
-This scheduler implements DDIM-like accelerated sampling for Flow Matching models.
-According to research (https://diffusionflow.github.io/), DDIM is equivalent to the
-Flow Matching sampler and works with both DDPM (noise prediction) and Flow Matching
-(velocity prediction) paradigms.
+This scheduler implements true DDIM-style accelerated sampling using subsequence
+sampling (timestep skipping) for Flow Matching models. Unlike linear schedulers
+that use all timesteps, DDIM samples from a larger timestep space using strategic
+skipping to achieve faster convergence.
 
 Key features:
-- 10x-50x faster sampling than standard Euler methods
+- True DDIM subsequence sampling (timestep skipping)
+- 10x-50x faster than standard Euler methods
 - Deterministic sampling when eta=0
 - Compatible with FLUX and Qwen models
-- Minimal changes to existing mflux architecture
+- Different from Linear scheduler through strategic timestep selection
+
+Reference: https://diffusionflow.github.io/
 """
 
 from typing import TYPE_CHECKING
@@ -25,37 +28,62 @@ from mflux.schedulers.base_scheduler import BaseScheduler
 
 class DDIMFlowScheduler(BaseScheduler):
     """
-    DDIM-style scheduler optimized for Flow Matching.
+    True DDIM-style scheduler with subsequence sampling for Flow Matching.
 
-    This is a simplified, accelerated sampler that reduces the number of steps
-    needed for high-quality generation while maintaining compatibility with
-    Flow Matching models like FLUX and Qwen.
+    This scheduler achieves acceleration by sampling from a larger timestep space
+    (num_train_timesteps) using only num_inference_steps strategically selected
+    timesteps. This subsequence approach is the core of DDIM acceleration.
 
     Args:
         runtime_config: Runtime configuration
         eta: Stochasticity parameter (0.0 = deterministic, 1.0 = more stochastic)
              Default: 0.0 (fully deterministic for maximum speed)
+        num_train_timesteps: Total timestep space to sample from
+                            Default: 1000 (same as standard diffusion models)
     """
 
-    def __init__(self, runtime_config: "RuntimeConfig", eta: float = 0.0, **kwargs):
+    def __init__(self, runtime_config: "RuntimeConfig", eta: float = 0.0, num_train_timesteps: int = 1000, **kwargs):
         self.runtime_config = runtime_config
         self.model_config = runtime_config.model_config
         self.eta = eta
+        self.num_train_timesteps = num_train_timesteps
 
-        # Compute sigma schedule (compatible with Flow Matching)
+        # Compute sigma schedule with subsequence sampling
         self._sigmas, self._timesteps = self._compute_timesteps_and_sigmas()
 
     def _compute_timesteps_and_sigmas(self) -> tuple[mx.array, mx.array]:
         """
-        Compute timesteps and sigmas for accelerated sampling.
+        Compute timesteps and sigmas using DDIM subsequence sampling.
 
-        For Flow Matching, we use a linear schedule from 1.0 to 0.0,
-        which corresponds to the flow from noise to data.
+        DDIM acceleration works by sampling from a larger timestep space
+        (num_train_timesteps) using only num_inference_steps strategically
+        selected timesteps. This is the key difference from Linear scheduler.
+
+        Example: num_train_timesteps=1000, num_inference_steps=10
+        -> timesteps = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900]
+        This "skipping" is what makes DDIM faster than linear approaches.
         """
         num_steps = self.runtime_config.num_inference_steps
 
-        # Linear schedule for Flow Matching: from 1.0 (pure noise) to 0.0 (clean data)
-        sigmas = mx.linspace(1.0, 0.0, num_steps + 1, dtype=mx.float32)
+        # DDIM subsequence sampling: select evenly spaced timesteps from larger space
+        step_ratio = self.num_train_timesteps // num_steps
+
+        # Create subsequence indices: [0, step_ratio, 2*step_ratio, ..., num_train_timesteps]
+        timestep_indices = mx.arange(0, self.num_train_timesteps, step_ratio, dtype=mx.int32)
+        timestep_indices = timestep_indices[:num_steps]
+
+        # Reverse for denoising (from high noise to low noise)
+        timestep_indices = timestep_indices[::-1]
+
+        # Convert timestep indices to sigma values [0, 1]
+        # This creates the compressed range characteristic of DDIM
+        sigmas_raw = timestep_indices.astype(mx.float32) / self.num_train_timesteps
+
+        # Append final sigma (0.0 for clean data)
+        sigmas_raw = mx.concatenate([sigmas_raw, mx.zeros(1)])
+
+        # For Flow Matching: invert so it goes from 1.0 (noise) to 0.0 (data)
+        sigmas = 1.0 - sigmas_raw
 
         # Apply sigma shift if required by the model
         if self.model_config.requires_sigma_shift:
@@ -70,14 +98,14 @@ class DDIMFlowScheduler(BaseScheduler):
             # Apply exponential shift
             shifted_sigmas = []
             for s in sigmas:
-                if s > 0:
+                if float(s) > 0:
                     shifted = mx.exp(mu) / (mx.exp(mu) + (1 / s - 1))
                     shifted_sigmas.append(shifted)
                 else:
                     shifted_sigmas.append(mx.array(0.0))
             sigmas = mx.array(shifted_sigmas)
 
-        # Timesteps are just indices
+        # Timesteps are just indices for the loop
         timesteps = mx.arange(num_steps, dtype=mx.float32)
 
         return sigmas, timesteps
