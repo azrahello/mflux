@@ -68,22 +68,26 @@ class DDIMFlowScheduler(BaseScheduler):
         # DDIM subsequence sampling: select evenly spaced timesteps from larger space
         step_ratio = self.num_train_timesteps // num_steps
 
-        # Create subsequence indices: [0, step_ratio, 2*step_ratio, ..., num_train_timesteps]
-        timestep_indices = mx.arange(0, self.num_train_timesteps, step_ratio, dtype=mx.int32)
+        # Create subsequence indices starting from high (noise) to low (data)
+        # Example: num_train_timesteps=1000, num_steps=8
+        # -> [875, 750, 625, 500, 375, 250, 125, 0] (reversed from start)
+        timestep_indices = mx.arange(self.num_train_timesteps - step_ratio, -1, -step_ratio, dtype=mx.int32)
         timestep_indices = timestep_indices[:num_steps]
 
-        # Reverse for denoising (from high noise to low noise)
-        timestep_indices = timestep_indices[::-1]
-
-        # Convert timestep indices to sigma values [0, 1]
-        # This creates the compressed range characteristic of DDIM
+        # Convert timestep indices to sigma values
+        # High timestep (875) -> high sigma (~0.875)
+        # Low timestep (0) -> low sigma (0.0)
         sigmas_raw = timestep_indices.astype(mx.float32) / self.num_train_timesteps
 
-        # Append final sigma (0.0 for clean data)
-        sigmas_raw = mx.concatenate([sigmas_raw, mx.zeros(1)])
+        # For Flow Matching: sigma directly represents noise level
+        # We want: 1.0 (pure noise) -> 0.0 (clean data)
+        # Scale the compressed DDIM range to full [1.0, 0.0] range
+        # Note: DDIM characteristic is that it doesn't reach exactly 1.0 or 0.0
+        # It uses a compressed range like [0.875, 0.0] which is then mapped to flow
+        sigmas = sigmas_raw
 
-        # For Flow Matching: invert so it goes from 1.0 (noise) to 0.0 (data)
-        sigmas = 1.0 - sigmas_raw
+        # Append final sigma (0.0 for clean data)
+        sigmas = mx.concatenate([sigmas, mx.zeros(1)])
 
         # Apply sigma shift if required by the model
         if self.model_config.requires_sigma_shift:
