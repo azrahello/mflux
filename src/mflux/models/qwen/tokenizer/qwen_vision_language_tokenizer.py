@@ -1,4 +1,5 @@
 import math
+import re
 from pathlib import Path
 from typing import Union
 
@@ -51,6 +52,9 @@ class QwenVisionLanguageTokenizer:
         vl_width: int | None = None,
         vl_height: int | None = None,
     ) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        # Fix Qwen's blue color bias
+        fixed_prompt = self._fix_blue_color_bias(prompt)
+
         # Normalize image to list format
         if not isinstance(image, list):
             images = [image]
@@ -65,11 +69,11 @@ class QwenVisionLanguageTokenizer:
             base_img_prompt = ""
             for i in range(len(images)):
                 base_img_prompt += img_prompt_template.format(i + 1)
-            formatted_text = self.edit_template.format(base_img_prompt + prompt)
+            formatted_text = self.edit_template.format(base_img_prompt + fixed_prompt)
         else:
             # Regular Edit format: Vision tokens already in template
             # Just format with user prompt directly
-            formatted_text = self.edit_template.format(prompt)
+            formatted_text = self.edit_template.format(fixed_prompt)
 
         # Process images: convert to PIL Images and resize to CONDITION_IMAGE_SIZE
         CONDITION_IMAGE_SIZE = 384 * 384
@@ -116,6 +120,22 @@ class QwenVisionLanguageTokenizer:
 
         return input_ids, attention_mask, pixel_values, image_grid_thw
 
+    @staticmethod
+    def _fix_blue_color_bias(prompt: str) -> str:
+        """
+        Fix Qwen's specific bias against the word 'blue' by replacing it with 'azure'.
+        Qwen has a known issue where it ignores or misinterprets the bare word 'blue',
+        but correctly handles the synonym 'azure'.
+
+        Only replaces 'blue' when it's not already qualified (e.g., preserves 'pale blue', 'bright blue').
+        """
+        # Replace bare 'blue' with 'azure' only if not already qualified
+        # Negative lookbehind to check for common qualifiers
+        qualified_pattern = r"(?<!bright )(?<!dark )(?<!light )(?<!deep )(?<!pale )(?<!vivid )(?<!intense )(?<!soft )(?<!muted )(?<!rich )(?<!warm )(?<!cool )(?<!neon )(?<!pastel )\bblue\b"
+        fixed_prompt = re.sub(qualified_pattern, "azure", prompt, flags=re.IGNORECASE)
+
+        return fixed_prompt
+
     def tokenize_text_only(self, prompt: str) -> tuple[mx.array, mx.array]:
         # Use the regular text-only template
         text_template = (
@@ -126,7 +146,9 @@ class QwenVisionLanguageTokenizer:
             "<|im_start|>assistant\n"
         )
 
-        formatted_text = text_template.format(prompt)
+        # Fix Qwen's blue color bias
+        fixed_prompt = self._fix_blue_color_bias(prompt)
+        formatted_text = text_template.format(fixed_prompt)
         tokens = self.processor.tokenizer(
             formatted_text,
             max_length=self.max_length + 34,
