@@ -69,21 +69,21 @@ class DDIMFlowScheduler(BaseScheduler):
         step_ratio = self.num_train_timesteps // num_steps
 
         # Create subsequence indices starting from high (noise) to low (data)
-        # Example: num_train_timesteps=1000, num_steps=8
-        # -> [875, 750, 625, 500, 375, 250, 125, 0] (reversed from start)
-        timestep_indices = mx.arange(self.num_train_timesteps - step_ratio, -1, -step_ratio, dtype=mx.int32)
+        # Start from num_train_timesteps to ensure we reach sigma=1.0 (pure noise)
+        # Example: num_train_timesteps=1000, num_steps=13, step_ratio=76
+        # -> [1000, 924, 848, 772, 696, 620, 544, 468, 392, 316, 240, 164, 88]
+        # This ensures full coverage from 1.0 (pure noise) to 0.0 (clean)
+        timestep_indices = mx.arange(self.num_train_timesteps, -1, -step_ratio, dtype=mx.int32)
         timestep_indices = timestep_indices[:num_steps]
 
         # Convert timestep indices to sigma values
-        # High timestep (875) -> high sigma (~0.875)
-        # Low timestep (0) -> low sigma (0.0)
+        # High timestep (1000) -> high sigma (1.0 = pure noise)
+        # Low timestep (88, etc.) -> low sigma (~0.088)
         sigmas_raw = timestep_indices.astype(mx.float32) / self.num_train_timesteps
 
         # For Flow Matching: sigma directly represents noise level
         # We want: 1.0 (pure noise) -> 0.0 (clean data)
-        # Scale the compressed DDIM range to full [1.0, 0.0] range
-        # Note: DDIM characteristic is that it doesn't reach exactly 1.0 or 0.0
-        # It uses a compressed range like [0.875, 0.0] which is then mapped to flow
+        # By starting from num_train_timesteps, we ensure full coverage from 1.0
         sigmas = sigmas_raw
 
         # Append final sigma (0.0 for clean data)
