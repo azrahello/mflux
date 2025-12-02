@@ -53,13 +53,17 @@ class FlowMatchEulerDiscreteScheduler(BaseScheduler):
         num_steps = self.runtime_config.num_inference_steps
         sigma_min = 1.0 / self.num_train_timesteps
         sigma_max = 1.0
+
+        # Compute mu for resolution-adaptive time shifting
+        mu = self._compute_mu()
+
         timesteps_linear = [
             sigma_max * self.num_train_timesteps
             - i * (sigma_max - sigma_min) * self.num_train_timesteps / (num_steps - 1)
             for i in range(num_steps)
         ]
         sigmas_linear = [t / self.num_train_timesteps for t in timesteps_linear]
-        sigmas_shifted = [FlowMatchEulerDiscreteScheduler._time_shift_exponential(1.0, 1.0, s) for s in sigmas_linear]
+        sigmas_shifted = [FlowMatchEulerDiscreteScheduler._time_shift_exponential(mu, 1.0, s) for s in sigmas_linear]
         sigmas_final = self._stretch_to_terminal(sigmas_shifted)
         timesteps = [s * self.num_train_timesteps for s in sigmas_final]
         sigmas_with_zero = sigmas_final + [0.0]
