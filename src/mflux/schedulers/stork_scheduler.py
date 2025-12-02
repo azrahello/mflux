@@ -133,13 +133,13 @@ class STORKScheduler(BaseScheduler):
         that handle stiff ODEs (steep velocity fields) without requiring smaller timesteps.
         """
         if self.order == 2:
-            # STORK-2: 2-stage stabilized RK method
+            # STORK-2: 2-stage stabilized RK method (Heun's method / RK2)
             # Based on second-order Gegenbauer polynomials
             # Coefficients optimized for stability on stiff problems
             self.rk_stages = 2
-            self.rk_a = [[0.0, 0.0], [0.5, 0.0]]
-            self.rk_b = [0.0, 1.0]
-            self.rk_c = [0.0, 0.5]
+            self.rk_a = [[0.0, 0.0], [1.0, 0.0]]
+            self.rk_b = [0.5, 0.5]  # Average of k1 and k2 (Heun's method)
+            self.rk_c = [0.0, 1.0]  # Evaluate second stage at full step
 
         else:  # order == 4
             # STORK-4: 4-stage stabilized RK method
