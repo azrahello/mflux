@@ -1,11 +1,13 @@
 from .ddim_flow_scheduler import DDIMFlowScheduler
 from .flow_match_euler_discrete_scheduler import FlowMatchEulerDiscreteScheduler
 from .linear_scheduler import LinearScheduler
+from .stork_scheduler import STORKScheduler
 
 __all__ = [
     "LinearScheduler",
     "FlowMatchEulerDiscreteScheduler",
     "DDIMFlowScheduler",
+    "STORKScheduler",
 ]
 
 
@@ -18,6 +20,19 @@ class SchedulerClassNotFound(ValueError): ...
 class InvalidSchedulerType(TypeError): ...
 
 
+# Factory functions for STORK variants
+def _create_stork_2(runtime_config, **kwargs):
+    """Create STORK-2 (second-order) scheduler."""
+    kwargs.setdefault("order", 2)
+    return STORKScheduler(runtime_config, **kwargs)
+
+
+def _create_stork_4(runtime_config, **kwargs):
+    """Create STORK-4 (fourth-order) scheduler."""
+    kwargs.setdefault("order", 4)
+    return STORKScheduler(runtime_config, **kwargs)
+
+
 SCHEDULER_REGISTRY = {
     "linear": LinearScheduler,
     "LinearScheduler": LinearScheduler,
@@ -25,6 +40,10 @@ SCHEDULER_REGISTRY = {
     "FlowMatchEulerDiscreteScheduler": FlowMatchEulerDiscreteScheduler,
     "ddim": DDIMFlowScheduler,  # DDIM-style Flow Matching
     "DDIMFlowScheduler": DDIMFlowScheduler,
+    "stork": _create_stork_2,  # STORK: Stabilized Runge-Kutta (default to order 2)
+    "stork-2": _create_stork_2,  # STORK-2 (second-order, faster)
+    "stork-4": _create_stork_4,  # STORK-4 (fourth-order, more accurate)
+    "STORKScheduler": STORKScheduler,
 }
 
 
