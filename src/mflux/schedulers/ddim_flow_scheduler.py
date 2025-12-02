@@ -39,7 +39,7 @@ class DDIMFlowScheduler(BaseScheduler):
         eta: Stochasticity parameter (0.0 = deterministic, 1.0 = more stochastic)
              Default: 0.0 (fully deterministic for maximum speed)
         num_train_timesteps: Total timestep space to sample from
-                            Default: 1000 (same as standard diffusion models)
+                            Default: 1000 (standard diffusion timestep space)
     """
 
     def __init__(self, runtime_config: "RuntimeConfig", eta: float = 0.0, num_train_timesteps: int = 1000, **kwargs):
@@ -65,16 +65,21 @@ class DDIMFlowScheduler(BaseScheduler):
         """
         num_steps = self.runtime_config.num_inference_steps
 
-        # DDIM subsequence sampling: select evenly spaced timesteps from larger space
-        step_ratio = self.num_train_timesteps // num_steps
+        # DDIM subsequence sampling with quadratic spacing for true DDIM behavior
+        # Unlike linear Euler which uses uniform spacing, DDIM concentrates more
+        # steps at high noise (beginning) using quadratic distribution
+        # This is the key difference that makes DDIM truly different from Euler
 
-        # Create subsequence indices starting from high (noise) to low (data)
-        # Start from num_train_timesteps to ensure we reach sigma=1.0 (pure noise)
-        # Example: num_train_timesteps=1000, num_steps=13, step_ratio=76
-        # -> [1000, 924, 848, 772, 696, 620, 544, 468, 392, 316, 240, 164, 88]
-        # This ensures full coverage from 1.0 (pure noise) to 0.0 (clean)
-        timestep_indices = mx.arange(self.num_train_timesteps, -1, -step_ratio, dtype=mx.int32)
-        timestep_indices = timestep_indices[:num_steps]
+        # Generate quadratically spaced indices for more steps early on
+        # t_i = (1 - (i/n)^2) for i in [0, n]
+        timestep_indices = []
+        for i in range(num_steps):
+            # Quadratic spacing: more dense at the beginning (high noise)
+            t_normalized = 1.0 - (i / num_steps) ** 2
+            t_index = int(t_normalized * self.num_train_timesteps)
+            timestep_indices.append(t_index)
+
+        timestep_indices = mx.array(timestep_indices, dtype=mx.int32)
 
         # Convert timestep indices to sigma values
         # High timestep (1000) -> high sigma (1.0 = pure noise)
