@@ -39,7 +39,7 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
                  - "sqrt": Preserves structure, good detail in complex areas
                  - "scaled_linear": Adaptive scaling for different image types
                  - "beta": Beta distribution (complex, concentrates steps at edges)
-        exponential_beta: Beta parameter for exponential schedule (default: 5.0)
+        exponential_beta: Beta parameter for exponential schedule (default: 2.0, range: 1.0-3.0 recommended)
         beta_alpha: Alpha parameter for beta schedule (default: 0.6)
         beta_beta: Beta parameter for beta schedule (default: 0.6)
 
@@ -61,7 +61,7 @@ class FlowMatchAdvancedScheduler(BaseScheduler):
         self,
         runtime_config: "RuntimeConfig",
         schedule: Literal["linear", "cosine", "exponential", "sqrt", "scaled_linear", "beta"] = "linear",
-        exponential_beta: float = 5.0,
+        exponential_beta: float = 2.0,
         beta_alpha: float = 0.6,
         beta_beta: float = 0.6,
         **kwargs,
