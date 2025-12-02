@@ -1,4 +1,5 @@
 from .ddim_flow_scheduler import DDIMFlowScheduler
+from .er_sde_beta_scheduler import ERSDEBetaScheduler
 from .flow_match_euler_discrete_scheduler import FlowMatchEulerDiscreteScheduler
 from .linear_scheduler import LinearScheduler
 from .stork_scheduler import STORKScheduler
@@ -7,6 +8,7 @@ __all__ = [
     "LinearScheduler",
     "FlowMatchEulerDiscreteScheduler",
     "DDIMFlowScheduler",
+    "ERSDEBetaScheduler",
     "STORKScheduler",
 ]
 
@@ -40,6 +42,8 @@ SCHEDULER_REGISTRY = {
     "FlowMatchEulerDiscreteScheduler": FlowMatchEulerDiscreteScheduler,
     "ddim": DDIMFlowScheduler,  # DDIM-style Flow Matching
     "DDIMFlowScheduler": DDIMFlowScheduler,
+    "er_sde_beta": ERSDEBetaScheduler,  # ER-SDE with Beta timestep distribution
+    "ERSDEBetaScheduler": ERSDEBetaScheduler,
     "stork": _create_stork_2,  # STORK: Stabilized Runge-Kutta (default to order 2)
     "stork-2": _create_stork_2,  # STORK-2 (second-order, faster)
     "stork-4": _create_stork_4,  # STORK-4 (fourth-order, more accurate)

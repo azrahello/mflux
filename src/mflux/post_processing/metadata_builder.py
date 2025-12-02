@@ -111,6 +111,8 @@ class MetadataBuilder:
             xmp_packet += f"\n    <mflux:steps>{metadata['steps']}</mflux:steps>"
         if "guidance" in metadata:
             xmp_packet += f"\n    <mflux:guidance>{metadata['guidance']}</mflux:guidance>"
+        if "scheduler" in metadata:
+            xmp_packet += f"\n    <mflux:scheduler>{metadata['scheduler']}</mflux:scheduler>"
         if "model_config" in metadata:
             xmp_packet += f"\n    <mflux:model>{metadata['model_config']}</mflux:model>"
         if lora_info:
@@ -177,7 +179,10 @@ class MetadataBuilder:
 
         # Add generation parameters in Country field
         if "steps" in metadata and "guidance" in metadata:
-            iptc_data[101] = f"Steps:{metadata['steps']} CFG:{metadata['guidance']}".encode("utf-8")  # Country
+            params = f"Steps:{metadata['steps']} CFG:{metadata['guidance']}"
+            if "scheduler" in metadata:
+                params += f" Scheduler:{metadata['scheduler']}"
+            iptc_data[101] = params.encode("utf-8")  # Country
 
         # Build keywords including LoRA info
         keywords = ["AI", "Generated", "MFLUX"]
@@ -187,6 +192,8 @@ class MetadataBuilder:
             keywords.append(f"steps-{metadata['steps']}")
         if "guidance" in metadata:
             keywords.append(f"guidance-{metadata['guidance']}")
+        if "scheduler" in metadata:
+            keywords.append(f"scheduler-{metadata['scheduler']}")
         if "model_config" in metadata:
             keywords.append(f"model-{metadata['model_config']}")
         if lora_info:
@@ -229,4 +236,3 @@ class MetadataBuilder:
             lora_list.append(f"{lora_name}:{scale}")
 
         return ", ".join(lora_list)
-

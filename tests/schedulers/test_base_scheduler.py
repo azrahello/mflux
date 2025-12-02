@@ -1,4 +1,3 @@
-import mlx.core as mx
 import pytest
 
 from mflux.schedulers.base_scheduler import BaseScheduler

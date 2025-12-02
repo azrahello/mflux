@@ -71,15 +71,16 @@ class MetadataReader:
 
             # Simple XML parsing for common fields
             fields = {
-                "description": "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">",
+                "description": '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">',
                 "creator": "<dc:creator><rdf:Seq><rdf:li>",
-                "rights": "<dc:rights><rdf:Alt><rdf:li xml:lang=\"x-default\">",
+                "rights": '<dc:rights><rdf:Alt><rdf:li xml:lang="x-default">',
                 "creator_tool": "<xmp:CreatorTool>",
                 "category": "<photoshop:Category>",
                 "credit": "<photoshop:Credit>",
                 "seed": "<mflux:seed>",
                 "steps": "<mflux:steps>",
                 "guidance": "<mflux:guidance>",
+                "scheduler": "<mflux:scheduler>",
                 "model": "<mflux:model>",
                 "loras": "<mflux:loras>",
                 "generation_time": "<mflux:generationTime>",
@@ -123,4 +124,3 @@ class MetadataReader:
             "exif": MetadataReader.read_exif_metadata(image_path),
             "xmp": MetadataReader.read_xmp_metadata(image_path),
         }
-
