@@ -117,19 +117,14 @@ class QwenVisionLanguageTokenizer:
         return input_ids, attention_mask, pixel_values, image_grid_thw
 
     def tokenize_text_only(self, prompt: str) -> tuple[mx.array, mx.array]:
-        # Use the regular text-only template
-        text_template = (
-            "<|im_start|>system\n"
-            "Describe the image by detailing the color, shape, size, texture, quantity, text, "
-            "spatial relationships of the objects and background:<|im_end|>\n"
-            "<|im_start|>user\n{}<|im_end|>\n"
-            "<|im_start|>assistant\n"
-        )
+        # Aligned with official Qwen-Image implementation: no system prompt for text-to-image generation
+        # The previous "Describe the image..." system prompt was for image captioning, not generation
+        text_template = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
 
         formatted_text = text_template.format(prompt)
         tokens = self.processor.tokenizer(
             formatted_text,
-            max_length=self.max_length + 34,
+            max_length=self.max_length,  # No system prompt offset needed
             padding=True,
             truncation=True,
             return_tensors="pt",

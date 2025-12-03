@@ -6,8 +6,10 @@ class TokenizerQwen:
     def __init__(self, tokenizer: Qwen2Tokenizer, max_length: int = 1024):
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.prompt_template = "<|im_start|>system\nDescribe the image by detailing the color, shape, size, texture, quantity, text, spatial relationships of the objects and background:<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
-        self.template_start_idx = 34
+        # Aligned with official Qwen-Image implementation: no system prompt for text-to-image generation
+        # The previous "Describe the image..." system prompt was for image captioning, not generation
+        self.prompt_template = "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        self.template_start_idx = 0  # No system prompt tokens to skip
 
     def tokenize(self, prompt: str) -> tuple[mx.array, mx.array]:
         formatted_text = self.prompt_template.format(prompt)
