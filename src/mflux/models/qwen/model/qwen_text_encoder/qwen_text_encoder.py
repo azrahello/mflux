@@ -16,10 +16,11 @@ class QwenTextEncoder(nn.Module):
     ) -> tuple[mx.array, mx.array]:
         hidden_states = self.encoder(input_ids, attention_mask)
 
+        # drop_idx was 34 to skip system prompt tokens, now 0 since no system prompt
         prompt_embeds, encoder_attention_mask = QwenTextEncoder._process_text_embeddings_mlx(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
-            drop_idx=34,
+            drop_idx=0,
             dtype=mx.bfloat16,
         )
 
