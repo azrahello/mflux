@@ -45,8 +45,24 @@ class ModelSaver:
 
     @staticmethod
     def _save_weights(base_path: str, bits: int, model: nn.Module, subdir: str) -> None:
+        from mflux.models.common.lora.baking.lora_baker import LoRABaker
+
         path = Path(base_path) / subdir
         path.mkdir(parents=True, exist_ok=True)
+
+        # Bake LoRAs before saving (if any exist)
+        baked_count = LoRABaker.bake_loras_inplace(model)
+        if baked_count > 0:
+            print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
+
+            # Verify no LoRA layers remain
+            from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALinear
+            from mflux.models.common.lora.layer.linear_lora_layer import LoRALinear
+
+            remaining_loras = sum(1 for _, m in model.named_modules() if isinstance(m, (LoRALinear, FusedLoRALinear)))
+            if remaining_loras > 0:
+                print(f"  ⚠️  Warning: {remaining_loras} LoRA layer(s) still present after baking")
+
         weights = dict(tree_flatten(model.parameters()))
         shards = ModelSaver._split_weights(weights)
 
