@@ -45,9 +45,38 @@ class ModelSaver:
 
     @staticmethod
     def _save_weights(base_path: str, bits: int, model: nn.Module, subdir: str) -> None:
+        from mflux.models.common.lora.baking.lora_baker import LoRABaker
+
         path = Path(base_path) / subdir
         path.mkdir(parents=True, exist_ok=True)
-        weights = dict(tree_flatten(model.parameters()))
+
+        # Bake LoRAs before saving (if any exist)
+        baked_count = LoRABaker.bake_loras_inplace(model)
+        if baked_count > 0:
+            print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
+
+            # Verify no LoRA layers remain
+            from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALinear
+            from mflux.models.common.lora.layer.linear_lora_layer import LoRALinear
+
+            remaining_loras = sum(1 for _, m in model.named_modules() if isinstance(m, (LoRALinear, FusedLoRALinear)))
+            if remaining_loras > 0:
+                print(f"  ⚠️  Warning: {remaining_loras} LoRA layer(s) still present after baking")
+
+        # Aggressive cleanup after baking
+        mx.clear_cache()
+        import gc
+
+        gc.collect()
+
+        # Force re-evaluation of the model's parameter tree
+        # This ensures tree_flatten only sees the current state
+        mx.eval(model.parameters())
+
+        # Collect weights, filtering out any LoRA-related parameters
+        all_weights = dict(tree_flatten(model.parameters()))
+        weights = {k: v for k, v in all_weights.items() if "lora" not in k.lower()}
+
         shards = ModelSaver._split_weights(weights)
 
         # Build weight_map for index.json (maps each weight key to its shard file)
@@ -86,12 +115,9 @@ class ModelSaver:
         shard: dict = {}
         shard_size = 0
         for k, v in weights.items():
-            # If adding this weight would exceed the limit AND we already have weights in the current shard,
-            # save the current shard and start a new one
             if shard_size + v.nbytes > max_file_size_bytes and shard:
                 shards.append(shard)
                 shard, shard_size = {}, 0
-            # Add the weight to the current shard (even if it's larger than max_file_size_bytes)
             shard[k] = v
             shard_size += v.nbytes
         if shard:  # Don't append empty shard
