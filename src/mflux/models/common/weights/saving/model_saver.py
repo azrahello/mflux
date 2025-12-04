@@ -86,9 +86,12 @@ class ModelSaver:
         shard: dict = {}
         shard_size = 0
         for k, v in weights.items():
-            if shard_size + v.nbytes > max_file_size_bytes:
+            # If adding this weight would exceed the limit AND we already have weights in the current shard,
+            # save the current shard and start a new one
+            if shard_size + v.nbytes > max_file_size_bytes and shard:
                 shards.append(shard)
                 shard, shard_size = {}, 0
+            # Add the weight to the current shard (even if it's larger than max_file_size_bytes)
             shard[k] = v
             shard_size += v.nbytes
         if shard:  # Don't append empty shard
