@@ -63,6 +63,13 @@ class ModelSaver:
             if remaining_loras > 0:
                 print(f"  ⚠️  Warning: {remaining_loras} LoRA layer(s) still present after baking")
 
+            # Aggressive cleanup after baking
+            mx.eval(model.parameters())
+            mx.clear_cache()
+            import gc
+
+            gc.collect()
+
         weights = dict(tree_flatten(model.parameters()))
         shards = ModelSaver._split_weights(weights)
 

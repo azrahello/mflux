@@ -92,6 +92,10 @@ class QwenAttention(nn.Module):
         mrope_section_doubled = [s * 2 for s in mrope_section]
 
         cos, sin = position_embeddings
+
+        # Handle empty sequences (e.g., empty negative prompts)
+        if cos.size == 0 or sin.size == 0:
+            return q, k
         cos_chunks = []
         sin_chunks = []
         start_idx = 0

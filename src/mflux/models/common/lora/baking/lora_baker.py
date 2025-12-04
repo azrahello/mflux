@@ -38,8 +38,8 @@ class LoRABaker:
             if isinstance(submodule, (LoRALinear, FusedLoRALinear)):
                 lora_layers.append((name, submodule))
 
-        # Second pass: bake and replace
-        for name, submodule in lora_layers:
+        # Second pass: bake and replace with memory cleanup
+        for i, (name, submodule) in enumerate(lora_layers):
             # Get the parent module and attribute name
             parent, attr_name = LoRABaker._get_parent_and_attr(module, name)
             if parent is None:
@@ -56,6 +56,11 @@ class LoRABaker:
                 # Parent is a regular module, use setattr
                 setattr(parent, attr_name, baked_linear)
             baked_count += 1
+
+            # Periodic cleanup to reduce memory pressure
+            if (i + 1) % 50 == 0:
+                mx.eval(baked_linear.parameters())
+                mx.clear_cache()
 
         return baked_count
 
