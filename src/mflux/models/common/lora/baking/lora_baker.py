@@ -48,6 +48,16 @@ class LoRABaker:
             # Bake the LoRA layer
             baked_linear = LoRABaker._bake_single_lora_layer(submodule)
 
+            # Explicitly clear references to old LoRA layers to prevent memory leaks
+            if isinstance(submodule, FusedLoRALinear):
+                # Clear references to prevent tree_flatten from picking them up
+                submodule.loras = []
+                submodule.base_linear = None
+            elif isinstance(submodule, LoRALinear):
+                submodule.lora_A = None
+                submodule.lora_B = None
+                submodule.linear = None
+
             # Replace the LoRA layer with the baked linear layer
             if attr_name.isdigit():
                 # Parent is a list/ModuleList, use indexing
@@ -56,6 +66,9 @@ class LoRABaker:
                 # Parent is a regular module, use setattr
                 setattr(parent, attr_name, baked_linear)
             baked_count += 1
+
+            # Delete the old submodule reference
+            del submodule
 
             # Periodic cleanup to reduce memory pressure
             if (i + 1) % 50 == 0:
