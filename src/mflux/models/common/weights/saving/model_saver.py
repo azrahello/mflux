@@ -117,18 +117,11 @@ class ModelSaver:
         shard_size = 0
         shard_index = 0
 
-        # Use tqdm to show progress
-        # First count total parameters to show accurate progress
-        param_count = sum(1 for key, _ in tree_flatten(model.parameters()) if "lora" not in key.lower())
-        param_iter = tqdm(
-            tree_flatten(model.parameters()),
-            total=param_count,
-            desc=f"  {path.name}",
-            unit="weight",
-            leave=False,
-        )
+        # Iterate through parameters without progress bar to avoid double-iteration
+        # (counting parameters would call tree_flatten twice, doubling memory usage)
+        print(f"  Saving {path.name}...")
 
-        for key, value in param_iter:
+        for key, value in tree_flatten(model.parameters()):
             # Skip LoRA-related parameters
             if "lora" in key.lower():
                 continue
@@ -140,6 +133,7 @@ class ModelSaver:
             if shard_size + value.nbytes > max_file_size_bytes and shard:
                 # Save current shard immediately
                 shard_filename = f"{shard_index}.safetensors"
+                print(f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB)...")
                 mx.save_safetensors(
                     str(path / shard_filename),
                     shard,
@@ -169,6 +163,7 @@ class ModelSaver:
         # Don't forget to save the last shard
         if shard:
             shard_filename = f"{shard_index}.safetensors"
+            print(f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB)...")
             mx.save_safetensors(
                 str(path / shard_filename),
                 shard,
@@ -185,6 +180,7 @@ class ModelSaver:
             gc.collect()
             mx.clear_cache()
 
+        print(f"  ✓ Saved {shard_index + 1} shard(s)")
         return weight_map
 
     @staticmethod
