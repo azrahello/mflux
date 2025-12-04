@@ -16,20 +16,23 @@ class LoRABaker:
     """Utility class for baking LoRA weights into base model weights"""
 
     @staticmethod
-    def bake_loras_inplace(module: nn.Module, bits: int | None = None) -> int:
+    def bake_loras_inplace(module: nn.Module) -> int:
         """
         Recursively bake all LoRA layers in a module by replacing them with regular Linear layers
         containing the merged weights.
 
         Args:
             module: The module to bake LoRAs in (modified in-place)
-            bits: Optional quantization bits (4 or 8). If provided, baked layers will be quantized.
 
         Returns:
             Number of LoRA layers that were baked
 
         Formula:
             W_merged = W_base + scale * (lora_A @ lora_B).T
+
+        Note:
+            After baking, the module should be quantized separately using nn.quantize()
+            if quantization is desired.
         """
         baked_count = 0
         lora_layers = []
@@ -47,7 +50,7 @@ class LoRABaker:
                 continue
 
             # Bake the LoRA layer
-            baked_linear = LoRABaker._bake_single_lora_layer(submodule, bits)
+            baked_linear = LoRABaker._bake_single_lora_layer(submodule)
 
             # Explicitly clear references to old LoRA layers to prevent memory leaks
             if isinstance(submodule, FusedLoRALinear):
@@ -79,18 +82,15 @@ class LoRABaker:
         return baked_count
 
     @staticmethod
-    def _bake_single_lora_layer(
-        lora_layer: LoRALinear | FusedLoRALinear, bits: int | None = None
-    ) -> nn.Linear | nn.QuantizedLinear:
+    def _bake_single_lora_layer(lora_layer: LoRALinear | FusedLoRALinear) -> nn.Linear:
         """
         Bake a single LoRA layer into a regular Linear layer
 
         Args:
             lora_layer: LoRALinear or FusedLoRALinear layer to bake
-            bits: Optional quantization bits (4 or 8). If provided, the layer will be quantized.
 
         Returns:
-            nn.Linear or nn.QuantizedLinear layer with merged weights
+            nn.Linear layer with merged weights
         """
         if isinstance(lora_layer, FusedLoRALinear):
             # FusedLoRALinear: merge all LoRAs into the base linear IN-PLACE
@@ -126,10 +126,6 @@ class LoRABaker:
             # Force evaluation to free computation graph
             mx.eval(new_linear.parameters())
 
-            # Quantize if requested
-            if bits is not None:
-                nn.quantize(new_linear, bits=bits)
-
             return new_linear
 
         elif isinstance(lora_layer, LoRALinear):
@@ -160,10 +156,6 @@ class LoRABaker:
 
             # Force evaluation to free computation graph
             mx.eval(new_linear.parameters())
-
-            # Quantize if requested
-            if bits is not None:
-                nn.quantize(new_linear, bits=bits)
 
             return new_linear
 

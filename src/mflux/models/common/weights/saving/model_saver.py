@@ -54,12 +54,9 @@ class ModelSaver:
         path.mkdir(parents=True, exist_ok=True)
 
         # Bake LoRAs before saving (if any exist)
-        baked_count = LoRABaker.bake_loras_inplace(model, bits=bits)
+        baked_count = LoRABaker.bake_loras_inplace(model)
         if baked_count > 0:
-            if bits is not None:
-                print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights (quantized to {bits}-bit)")
-            else:
-                print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
+            print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
 
             # Verify no LoRA layers remain
             from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALinear
@@ -68,6 +65,12 @@ class ModelSaver:
             remaining_loras = sum(1 for _, m in model.named_modules() if isinstance(m, (LoRALinear, FusedLoRALinear)))
             if remaining_loras > 0:
                 print(f"  ⚠️  Warning: {remaining_loras} LoRA layer(s) still present after baking")
+
+        # Quantize the entire model if requested (after baking LoRAs)
+        if bits is not None:
+            print(f"  ⚙️  Quantizing model to {bits}-bit...")
+            nn.quantize(model, bits=bits)
+            print("  ✓ Quantization complete")
 
         # Aggressive cleanup after baking
         mx.clear_cache()
