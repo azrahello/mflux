@@ -86,7 +86,7 @@ class ModelSaver:
         shard: dict = {}
         shard_size = 0
         for k, v in weights.items():
-            if shard_size + v.nbytes > max_file_size_bytes:
+            if shard_size + v.nbytes > max_file_size_bytes and shard:
                 shards.append(shard)
                 shard, shard_size = {}, 0
             shard[k] = v
