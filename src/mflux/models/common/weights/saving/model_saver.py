@@ -77,18 +77,6 @@ class ModelSaver:
         all_weights = dict(tree_flatten(model.parameters()))
         weights = {k: v for k, v in all_weights.items() if "lora" not in k.lower()}
 
-        # Debug: report weight statistics
-        total_params = sum(w.size for w in weights.values())
-        total_size_gb = sum(w.nbytes for w in weights.values()) / (1024**3)
-        print(f"  📊 Total parameters: {total_params:,} ({total_size_gb:.2f} GB)")
-
-        # Check for LoRA-related keys in weights
-        lora_keys = [k for k in weights.keys() if "lora" in k.lower()]
-        if lora_keys:
-            lora_size_gb = sum(weights[k].nbytes for k in lora_keys) / (1024**3)
-            print(f"  ⚠️  WARNING: Found {len(lora_keys)} LoRA-related weight keys ({lora_size_gb:.2f} GB)")
-            print(f"      First 5: {lora_keys[:5]}")
-
         shards = ModelSaver._split_weights(weights)
 
         # Build weight_map for index.json (maps each weight key to its shard file)
