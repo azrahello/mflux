@@ -82,41 +82,10 @@ class ModelSaver:
         # This ensures tree_flatten only sees the current state
         mx.eval(model.parameters())
 
-        # Build shards incrementally to avoid loading all weights in memory at once
-        shards = ModelSaver._split_weights_incremental(model)
+        # Save shards directly without keeping them all in memory
+        weight_map = ModelSaver._save_shards_streaming(model, path, bits)
 
-        # Build weight_map for index.json (maps each weight key to its shard file)
-        weight_map = {}
-        shard_iter = tqdm(enumerate(shards), total=len(shards), desc=f"  {subdir}", unit="shard", leave=False)
-        for i, shard in shard_iter:
-            shard_filename = f"{i}.safetensors"
-
-            # Evaluate shard before saving to materialize lazy computations
-            for weight in shard.values():
-                mx.eval(weight)
-
-            mx.save_safetensors(
-                str(path / shard_filename),
-                shard,
-                {
-                    "quantization_level": str(bits),
-                    "mflux_version": VersionUtil.get_mflux_version(),
-                },
-            )
-            # Record which file each weight belongs to
-            for key in shard.keys():
-                weight_map[key] = shard_filename
-
-            # Clear shard from memory immediately after saving
-            del shard
-
-            # Aggressive cleanup after each shard to prevent memory buildup
-            if (i + 1) % 5 == 0:  # Every 5 shards (~10GB)
-                gc.collect()
-                mx.clear_cache()
-
-        # Final cleanup after all shards are saved
-        del shards
+        # Final cleanup
         gc.collect()
         mx.clear_cache()
 
@@ -131,6 +100,92 @@ class ModelSaver:
         }
         with open(path / "model.safetensors.index.json", "w") as f:
             json.dump(index_data, f, indent=2)
+
+    @staticmethod
+    def _save_shards_streaming(
+        model: nn.Module, path: Path, bits: int | None, max_file_size_gb: int = 2
+    ) -> dict[str, str]:
+        """
+        Stream-save model weights directly to disk without keeping all shards in memory.
+        This is the most memory-efficient approach for saving large models.
+        """
+        import gc
+
+        max_file_size_bytes = max_file_size_gb << 30
+        weight_map = {}
+        shard: dict = {}
+        shard_size = 0
+        shard_index = 0
+
+        # Use tqdm to show progress
+        # First count total parameters to show accurate progress
+        param_count = sum(1 for _, _ in tree_flatten(model.parameters()) if "lora" not in _.lower())
+        param_iter = tqdm(
+            tree_flatten(model.parameters()),
+            total=param_count,
+            desc=f"  {path.name}",
+            unit="weight",
+            leave=False,
+        )
+
+        for key, value in param_iter:
+            # Skip LoRA-related parameters
+            if "lora" in key.lower():
+                continue
+
+            # Evaluate this specific weight to materialize it
+            mx.eval(value)
+
+            # Check if adding this weight would exceed shard size
+            if shard_size + value.nbytes > max_file_size_bytes and shard:
+                # Save current shard immediately
+                shard_filename = f"{shard_index}.safetensors"
+                mx.save_safetensors(
+                    str(path / shard_filename),
+                    shard,
+                    {
+                        "quantization_level": str(bits),
+                        "mflux_version": VersionUtil.get_mflux_version(),
+                    },
+                )
+
+                # Update weight_map
+                for shard_key in shard.keys():
+                    weight_map[shard_key] = shard_filename
+
+                # Clear shard and cleanup
+                del shard
+                shard = {}
+                shard_size = 0
+                shard_index += 1
+
+                # Aggressive cleanup
+                gc.collect()
+                mx.clear_cache()
+
+            shard[key] = value
+            shard_size += value.nbytes
+
+        # Don't forget to save the last shard
+        if shard:
+            shard_filename = f"{shard_index}.safetensors"
+            mx.save_safetensors(
+                str(path / shard_filename),
+                shard,
+                {
+                    "quantization_level": str(bits),
+                    "mflux_version": VersionUtil.get_mflux_version(),
+                },
+            )
+
+            for shard_key in shard.keys():
+                weight_map[shard_key] = shard_filename
+
+            del shard
+            gc.collect()
+            mx.clear_cache()
+
+        return weight_map
 
     @staticmethod
     def _split_weights_incremental(model: nn.Module, max_file_size_gb: int = 2) -> list[dict]:
