@@ -74,13 +74,15 @@ class LoRABaker:
             # Delete the old submodule reference
             del submodule
 
-            # Aggressive periodic cleanup to reduce memory pressure
-            if (i + 1) % 10 == 0:
-                import gc
+            # Cleanup after EVERY layer to minimize memory pressure
+            import gc
 
-                mx.eval(baked_linear.parameters())
-                mx.clear_cache()
+            mx.clear_cache()
+            if (i + 1) % 5 == 0:
                 gc.collect()
+
+            # Progress every 10 layers
+            if (i + 1) % 10 == 0:
                 print(f"  Baked {i + 1}/{len(lora_layers)} layers...")
 
         # Final cleanup after all baking
@@ -126,6 +128,12 @@ class LoRABaker:
             # Bake into base weight
             merged_weight = (base_weight + merged_update).astype(original_dtype)
 
+            # Force evaluation immediately to free intermediate computation graphs
+            mx.eval(merged_weight)
+
+            # Clear intermediate variables
+            del base_weight, merged_update
+
             # Create new Linear layer with merged weights
             output_dims, input_dims = merged_weight.shape
             new_linear = nn.Linear(input_dims, output_dims, bias=hasattr(base_linear, "bias"))
@@ -156,6 +164,12 @@ class LoRABaker:
             # W += scale * (lora_A @ lora_B).T
             lora_delta = mx.matmul(lora_layer.lora_A, lora_layer.lora_B).T
             merged_weight = (base_weight + lora_layer.scale * lora_delta).astype(original_dtype)
+
+            # Force evaluation immediately to free intermediate computation graphs
+            mx.eval(merged_weight)
+
+            # Clear intermediate variables
+            del base_weight, lora_delta
 
             # Create new Linear layer with merged weights
             output_dims, input_dims = merged_weight.shape
