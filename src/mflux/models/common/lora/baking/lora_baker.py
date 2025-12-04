@@ -92,40 +92,68 @@ class LoRABaker:
             # FusedLoRALinear: merge all LoRAs into the base linear IN-PLACE
             base_linear = lora_layer.base_linear
 
-            # Store original dtype to preserve precision
-            original_dtype = base_linear.weight.dtype if not isinstance(base_linear, nn.QuantizedLinear) else mx.float16
+            # Get base weight - dequantize if needed
+            if isinstance(base_linear, nn.QuantizedLinear):
+                # Dequantize to full precision for baking
+                base_weight = mx.dequantize(
+                    base_linear.weight, base_linear.scales, base_linear.biases, base_linear.group_size, base_linear.bits
+                )
+                original_dtype = mx.float16
+            else:
+                base_weight = base_linear.weight
+                original_dtype = base_weight.dtype
 
             # Calculate merged update from all LoRAs
-            merged_update = mx.zeros_like(base_linear.weight)
+            merged_update = mx.zeros_like(base_weight)
             for lora in lora_layer.loras:
                 # W += scale * (lora_A @ lora_B).T
                 merged_update = merged_update + lora.scale * mx.matmul(lora.lora_A, lora.lora_B).T
 
-            # Bake into base weight IN-PLACE and preserve dtype
-            base_linear.weight = (base_linear.weight + merged_update).astype(original_dtype)
+            # Bake into base weight
+            merged_weight = (base_weight + merged_update).astype(original_dtype)
+
+            # Replace with regular Linear (can't save QuantizedLinear with baked LoRAs)
+            output_dims, input_dims = merged_weight.shape
+            new_linear = nn.Linear(input_dims, output_dims, bias=hasattr(base_linear, "bias"))
+            new_linear.weight = merged_weight
+            if hasattr(base_linear, "bias") and base_linear.bias is not None:
+                new_linear.bias = base_linear.bias
 
             # Force evaluation to free computation graph
-            mx.eval(base_linear.weight)
+            mx.eval(new_linear.parameters())
 
-            # Return the modified base_linear (not a new object!)
-            return base_linear
+            return new_linear
 
         elif isinstance(lora_layer, LoRALinear):
-            # LoRALinear: merge single LoRA into the base linear IN-PLACE
+            # LoRALinear: merge single LoRA into the base linear
             base_linear = lora_layer.linear
 
-            # Store original dtype to preserve precision
-            original_dtype = base_linear.weight.dtype if not isinstance(base_linear, nn.QuantizedLinear) else mx.float16
+            # Get base weight - dequantize if needed
+            if isinstance(base_linear, nn.QuantizedLinear):
+                # Dequantize to full precision for baking
+                base_weight = mx.dequantize(
+                    base_linear.weight, base_linear.scales, base_linear.biases, base_linear.group_size, base_linear.bits
+                )
+                original_dtype = mx.float16
+            else:
+                base_weight = base_linear.weight
+                original_dtype = base_weight.dtype
 
             # W += scale * (lora_A @ lora_B).T
             lora_delta = mx.matmul(lora_layer.lora_A, lora_layer.lora_B).T
-            base_linear.weight = (base_linear.weight + lora_layer.scale * lora_delta).astype(original_dtype)
+            merged_weight = (base_weight + lora_layer.scale * lora_delta).astype(original_dtype)
+
+            # Replace with regular Linear (can't save QuantizedLinear with baked LoRAs)
+            output_dims, input_dims = merged_weight.shape
+            new_linear = nn.Linear(input_dims, output_dims, bias=hasattr(base_linear, "bias"))
+            new_linear.weight = merged_weight
+            if hasattr(base_linear, "bias") and base_linear.bias is not None:
+                new_linear.bias = base_linear.bias
 
             # Force evaluation to free computation graph
-            mx.eval(base_linear.weight)
+            mx.eval(new_linear.parameters())
 
-            # Return the modified base_linear (not a new object!)
-            return base_linear
+            return new_linear
 
         else:
             raise TypeError(f"Unsupported layer type: {type(lora_layer)}")
