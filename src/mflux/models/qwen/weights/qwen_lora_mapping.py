@@ -243,4 +243,36 @@ class QwenLoRAMapping(LoRAMapping):
                     "lora_unet_transformer_blocks_{block}_txt_mlp_net_2.alpha",
                 ],
             ),
+            LoRATarget(
+                model_path="transformer_blocks.{block}.txt_mod_linear",
+                possible_up_patterns=[
+                    "transformer_blocks.{block}.txt_mod.1.lora_up.weight",
+                    "diffusion_model.transformer_blocks.{block}.txt_mod.1.lora_B.weight",
+                    "transformer_blocks.{block}.txt_mod.1.lora_B.default.weight",
+                ],
+                possible_down_patterns=[
+                    "transformer_blocks.{block}.txt_mod.1.lora_down.weight",
+                    "diffusion_model.transformer_blocks.{block}.txt_mod.1.lora_A.weight",
+                    "transformer_blocks.{block}.txt_mod.1.lora_A.default.weight",
+                ],
+                possible_alpha_patterns=[
+                    "transformer_blocks.{block}.txt_mod.1.alpha",
+                ],
+            ),
+            LoRATarget(
+                model_path="transformer_blocks.{block}.img_mod_linear",
+                possible_up_patterns=[
+                    "transformer_blocks.{block}.img_mod.1.lora_up.weight",
+                    "diffusion_model.transformer_blocks.{block}.img_mod.1.lora_B.weight",
+                    "transformer_blocks.{block}.img_mod.1.lora_B.default.weight",
+                ],
+                possible_down_patterns=[
+                    "transformer_blocks.{block}.img_mod.1.lora_down.weight",
+                    "diffusion_model.transformer_blocks.{block}.img_mod.1.lora_A.weight",
+                    "transformer_blocks.{block}.img_mod.1.lora_A.default.weight",
+                ],
+                possible_alpha_patterns=[
+                    "transformer_blocks.{block}.img_mod.1.alpha",
+                ],
+            ),
         ]
