@@ -119,7 +119,7 @@ class ModelSaver:
 
         # Use tqdm to show progress
         # First count total parameters to show accurate progress
-        param_count = sum(1 for _, _ in tree_flatten(model.parameters()) if "lora" not in _.lower())
+        param_count = sum(1 for key, _ in tree_flatten(model.parameters()) if "lora" not in key.lower())
         param_iter = tqdm(
             tree_flatten(model.parameters()),
             total=param_count,
