@@ -31,11 +31,14 @@ class ModelSaver:
                     ModelSaver._save_tokenizer(base_path, tokenizer_wrapper.tokenizer, t.hf_subdir)
 
         # Save model components with progress bar
-        components = [(c.model_attr or c.name, c.hf_subdir) for c in weight_definition.get_components()]
-        for attr_name, subdir in tqdm(components, desc="Saving components", unit="component"):
+        components = weight_definition.get_components()
+        for component_def in tqdm(components, desc="Saving components", unit="component"):
+            attr_name = component_def.model_attr or component_def.name
             component = getattr(model, attr_name, None)
             if component is not None:
-                ModelSaver._save_weights(base_path, bits, component, subdir)
+                # Respect skip_quantization flag for each component
+                component_bits = None if component_def.skip_quantization else bits
+                ModelSaver._save_weights(base_path, component_bits, component, component_def.hf_subdir)
 
     @staticmethod
     def _save_tokenizer(base_path: str, tokenizer: PreTrainedTokenizer, subdir: str) -> None:
