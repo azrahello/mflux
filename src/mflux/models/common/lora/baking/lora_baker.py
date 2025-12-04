@@ -81,10 +81,6 @@ class LoRABaker:
             if (i + 1) % 5 == 0:
                 gc.collect()
 
-            # Progress every 10 layers
-            if (i + 1) % 10 == 0:
-                print(f"  Baked {i + 1}/{len(lora_layers)} layers...")
-
         # Final cleanup after all baking
         import gc
 

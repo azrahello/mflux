@@ -111,72 +111,18 @@ class ModelSaver:
         """
         import gc
 
-        max_file_size_bytes = max_file_size_gb << 30
         weight_map = {}
-        shard: dict = {}
-        shard_size = 0
-        shard_index = 0
-        batch_size = 10  # Process 10 weights at a time
 
-        print(f"  Saving {path.name}...")
+        # Collect all weights first (needed for progress bar)
+        weights = {k: v for k, v in tree_flatten(model.parameters()) if "lora" not in k.lower()}
 
-        # Get parameter iterator
-        param_items = list(tree_flatten(model.parameters()))
-        total_params = len([k for k, _ in param_items if "lora" not in k.lower()])
+        # Split into shards
+        shards = ModelSaver._split_weights(weights, max_file_size_gb)
 
-        processed = 0
-        for key, value in param_items:
-            # Skip LoRA-related parameters
-            if "lora" in key.lower():
-                continue
-
-            # Evaluate this specific weight to materialize it
-            mx.eval(value)
-
-            # Check if adding this weight would exceed shard size
-            if shard_size + value.nbytes > max_file_size_bytes and shard:
-                # Save current shard immediately
-                shard_filename = f"{shard_index}.safetensors"
-                print(
-                    f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB) [{processed}/{total_params} weights]"
-                )
-                mx.save_safetensors(
-                    str(path / shard_filename),
-                    shard,
-                    {
-                        "quantization_level": str(bits),
-                        "mflux_version": VersionUtil.get_mflux_version(),
-                    },
-                )
-
-                # Update weight_map
-                for shard_key in shard.keys():
-                    weight_map[shard_key] = shard_filename
-
-                # Clear shard and cleanup
-                del shard
-                shard = {}
-                shard_size = 0
-                shard_index += 1
-
-                # Aggressive cleanup
-                gc.collect()
-                mx.clear_cache()
-
-            shard[key] = value
-            shard_size += value.nbytes
-            processed += 1
-
-            # Periodic cleanup every batch_size weights
-            if processed % batch_size == 0:
-                gc.collect()
-
-        # Don't forget to save the last shard
-        if shard:
-            shard_filename = f"{shard_index}.safetensors"
-            print(
-                f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB) [{processed}/{total_params} weights]"
-            )
+        # Save with progress bar
+        shard_iter = tqdm(enumerate(shards), total=len(shards), desc=f"  {path.name}", unit="shard", leave=False)
+        for i, shard in shard_iter:
+            shard_filename = f"{i}.safetensors"
             mx.save_safetensors(
                 str(path / shard_filename),
                 shard,
@@ -186,61 +132,15 @@ class ModelSaver:
                 },
             )
 
-            for shard_key in shard.keys():
-                weight_map[shard_key] = shard_filename
+            # Record which file each weight belongs to
+            for key in shard.keys():
+                weight_map[key] = shard_filename
 
-            del shard
+            # Cleanup after each shard
             gc.collect()
             mx.clear_cache()
 
-        # Clear the param_items list
-        del param_items
-        gc.collect()
-        mx.clear_cache()
-
-        print(f"  ✓ Saved {shard_index + 1} shard(s)")
         return weight_map
-
-    @staticmethod
-    def _split_weights_incremental(model: nn.Module, max_file_size_gb: int = 2) -> list[dict]:
-        """
-        Split model weights into shards incrementally to minimize memory usage.
-        Processes parameters one at a time instead of loading all into memory.
-        """
-        import gc
-
-        max_file_size_bytes = max_file_size_gb << 30
-        shards: list[dict] = []
-        shard: dict = {}
-        shard_size = 0
-
-        # Get parameters as an iterator (lazy evaluation)
-        for key, value in tree_flatten(model.parameters()):
-            # Skip LoRA-related parameters
-            if "lora" in key.lower():
-                continue
-
-            # Evaluate this specific weight to materialize it
-            mx.eval(value)
-
-            # Check if adding this weight would exceed shard size
-            if shard_size + value.nbytes > max_file_size_bytes and shard:
-                shards.append(shard)
-                shard = {}
-                shard_size = 0
-
-                # Cleanup after creating a shard
-                gc.collect()
-                mx.clear_cache()
-
-            shard[key] = value
-            shard_size += value.nbytes
-
-        # Don't forget the last shard
-        if shard:
-            shards.append(shard)
-
-        return shards
 
     @staticmethod
     def _split_weights(weights: dict, max_file_size_gb: int = 2) -> list[dict]:
