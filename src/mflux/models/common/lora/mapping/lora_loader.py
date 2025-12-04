@@ -239,7 +239,7 @@ class LoRALoader:
         if is_linear or is_lora_linear or is_fused_linear:
             # Handle fusion: if the current module is already a LoRA layer, fuse them
             if is_lora_linear:
-                print(f"   🔀 Fusing with existing LoRA at {target_path}")
+                # print(f"   🔀 Fusing with existing LoRA at {target_path}")
                 lora_layer = LoRALinear.from_linear(current_module.linear, r=lora_A.shape[1], scale=effective_scale)
                 lora_layer.lora_A = lora_A
                 lora_layer.lora_B = lora_B
@@ -248,7 +248,7 @@ class LoRALoader:
                 fused_layer = FusedLoRALinear(base_linear=current_module.linear, loras=[current_module, lora_layer])
                 replacement_layer = fused_layer
             elif is_fused_linear:
-                print(f"   🔀 Adding to existing fusion at {target_path}")
+                # print(f"   🔀 Adding to existing fusion at {target_path}")
                 lora_layer = LoRALinear.from_linear(
                     current_module.base_linear, r=lora_A.shape[1], scale=effective_scale
                 )
