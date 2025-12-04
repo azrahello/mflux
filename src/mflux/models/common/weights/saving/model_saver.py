@@ -51,9 +51,12 @@ class ModelSaver:
         path.mkdir(parents=True, exist_ok=True)
 
         # Bake LoRAs before saving (if any exist)
-        baked_count = LoRABaker.bake_loras_inplace(model)
+        baked_count = LoRABaker.bake_loras_inplace(model, bits=bits)
         if baked_count > 0:
-            print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
+            if bits is not None:
+                print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights (quantized to {bits}-bit)")
+            else:
+                print(f"  🔥 Baked {baked_count} LoRA layer(s) into base weights")
 
             # Verify no LoRA layers remain
             from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALinear
