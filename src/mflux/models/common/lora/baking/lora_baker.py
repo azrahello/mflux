@@ -74,10 +74,20 @@ class LoRABaker:
             # Delete the old submodule reference
             del submodule
 
-            # Periodic cleanup to reduce memory pressure
-            if (i + 1) % 50 == 0:
+            # Aggressive periodic cleanup to reduce memory pressure
+            if (i + 1) % 10 == 0:
+                import gc
+
                 mx.eval(baked_linear.parameters())
                 mx.clear_cache()
+                gc.collect()
+                print(f"  Baked {i + 1}/{len(lora_layers)} layers...")
+
+        # Final cleanup after all baking
+        import gc
+
+        gc.collect()
+        mx.clear_cache()
 
         return baked_count
 

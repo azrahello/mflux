@@ -107,7 +107,7 @@ class ModelSaver:
     ) -> dict[str, str]:
         """
         Stream-save model weights directly to disk without keeping all shards in memory.
-        This is the most memory-efficient approach for saving large models.
+        Processes weights in small batches to minimize memory usage.
         """
         import gc
 
@@ -116,12 +116,16 @@ class ModelSaver:
         shard: dict = {}
         shard_size = 0
         shard_index = 0
+        batch_size = 10  # Process 10 weights at a time
 
-        # Iterate through parameters without progress bar to avoid double-iteration
-        # (counting parameters would call tree_flatten twice, doubling memory usage)
         print(f"  Saving {path.name}...")
 
-        for key, value in tree_flatten(model.parameters()):
+        # Get parameter iterator
+        param_items = list(tree_flatten(model.parameters()))
+        total_params = len([k for k, _ in param_items if "lora" not in k.lower()])
+
+        processed = 0
+        for key, value in param_items:
             # Skip LoRA-related parameters
             if "lora" in key.lower():
                 continue
@@ -133,7 +137,9 @@ class ModelSaver:
             if shard_size + value.nbytes > max_file_size_bytes and shard:
                 # Save current shard immediately
                 shard_filename = f"{shard_index}.safetensors"
-                print(f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB)...")
+                print(
+                    f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB) [{processed}/{total_params} weights]"
+                )
                 mx.save_safetensors(
                     str(path / shard_filename),
                     shard,
@@ -159,11 +165,18 @@ class ModelSaver:
 
             shard[key] = value
             shard_size += value.nbytes
+            processed += 1
+
+            # Periodic cleanup every batch_size weights
+            if processed % batch_size == 0:
+                gc.collect()
 
         # Don't forget to save the last shard
         if shard:
             shard_filename = f"{shard_index}.safetensors"
-            print(f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB)...")
+            print(
+                f"    Saving shard {shard_index} ({shard_size / (1 << 30):.2f} GB) [{processed}/{total_params} weights]"
+            )
             mx.save_safetensors(
                 str(path / shard_filename),
                 shard,
@@ -179,6 +192,11 @@ class ModelSaver:
             del shard
             gc.collect()
             mx.clear_cache()
+
+        # Clear the param_items list
+        del param_items
+        gc.collect()
+        mx.clear_cache()
 
         print(f"  ✓ Saved {shard_index + 1} shard(s)")
         return weight_map
