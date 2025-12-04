@@ -86,13 +86,27 @@ class ModelSaver:
         all_weights = dict(tree_flatten(model.parameters()))
         weights = {k: v for k, v in all_weights.items() if "lora" not in k.lower()}
 
+        # Clear all_weights immediately to reduce memory pressure
+        del all_weights
+        gc.collect()
+
         shards = ModelSaver._split_weights(weights)
+
+        # Clear original weights dict after splitting to free memory
+        del weights
+        gc.collect()
+        mx.clear_cache()
 
         # Build weight_map for index.json (maps each weight key to its shard file)
         weight_map = {}
         shard_iter = tqdm(enumerate(shards), total=len(shards), desc=f"  {subdir}", unit="shard", leave=False)
         for i, shard in shard_iter:
             shard_filename = f"{i}.safetensors"
+
+            # Evaluate shard before saving to materialize lazy computations
+            for weight in shard.values():
+                mx.eval(weight)
+
             mx.save_safetensors(
                 str(path / shard_filename),
                 shard,
@@ -104,6 +118,19 @@ class ModelSaver:
             # Record which file each weight belongs to
             for key in shard.keys():
                 weight_map[key] = shard_filename
+
+            # Clear shard from memory immediately after saving
+            del shard
+
+            # Aggressive cleanup after each shard to prevent memory buildup
+            if (i + 1) % 5 == 0:  # Every 5 shards (~10GB)
+                gc.collect()
+                mx.clear_cache()
+
+        # Final cleanup after all shards are saved
+        del shards
+        gc.collect()
+        mx.clear_cache()
 
         # Write model.safetensors.index.json for HuggingFace compatibility
         # This ensures the saved model works even if custom metadata is stripped
