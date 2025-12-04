@@ -71,6 +71,12 @@ class ModelSaver:
             gc.collect()
 
         weights = dict(tree_flatten(model.parameters()))
+
+        # Debug: report weight statistics
+        total_params = sum(w.size for w in weights.values())
+        total_size_gb = sum(w.nbytes for w in weights.values()) / (1024**3)
+        print(f"  📊 Total parameters: {total_params:,} ({total_size_gb:.2f} GB)")
+
         shards = ModelSaver._split_weights(weights)
 
         # Build weight_map for index.json (maps each weight key to its shard file)
