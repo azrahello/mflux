@@ -89,50 +89,43 @@ class LoRABaker:
             Regular nn.Linear layer with merged weights
         """
         if isinstance(lora_layer, FusedLoRALinear):
-            # FusedLoRALinear: merge all LoRAs into the base linear
+            # FusedLoRALinear: merge all LoRAs into the base linear IN-PLACE
             base_linear = lora_layer.base_linear
-            base_weight = base_linear.weight
 
-            # Start with base weights
-            merged_weight = base_weight
+            # Store original dtype to preserve precision
+            original_dtype = base_linear.weight.dtype if not isinstance(base_linear, nn.QuantizedLinear) else mx.float16
 
-            # Add each LoRA's contribution: W += scale * (lora_A @ lora_B).T
-            # Note: lora_A is (input_dims, r), lora_B is (r, output_dims)
-            # So (lora_A @ lora_B) is (input_dims, output_dims)
-            # We transpose to get (output_dims, input_dims) to match weight shape
+            # Calculate merged update from all LoRAs
+            merged_update = mx.zeros_like(base_linear.weight)
             for lora in lora_layer.loras:
-                lora_delta = mx.matmul(lora.lora_A, lora.lora_B).T
-                merged_weight = merged_weight + lora.scale * lora_delta
+                # W += scale * (lora_A @ lora_B).T
+                merged_update = merged_update + lora.scale * mx.matmul(lora.lora_A, lora.lora_B).T
 
-            # Create new linear layer with merged weights
-            output_dims, input_dims = merged_weight.shape
-            baked = nn.Linear(input_dims, output_dims, bias=hasattr(base_linear, "bias"))
-            baked.weight = merged_weight
-            if hasattr(base_linear, "bias"):
-                baked.bias = base_linear.bias
+            # Bake into base weight IN-PLACE and preserve dtype
+            base_linear.weight = (base_linear.weight + merged_update).astype(original_dtype)
 
-            return baked
+            # Force evaluation to free computation graph
+            mx.eval(base_linear.weight)
+
+            # Return the modified base_linear (not a new object!)
+            return base_linear
 
         elif isinstance(lora_layer, LoRALinear):
-            # LoRALinear: merge single LoRA into the base linear
+            # LoRALinear: merge single LoRA into the base linear IN-PLACE
             base_linear = lora_layer.linear
-            base_weight = base_linear.weight
 
-            # Compute LoRA contribution: scale * (lora_A @ lora_B).T
-            # Note: lora_A is (input_dims, r), lora_B is (r, output_dims)
-            # So (lora_A @ lora_B) is (input_dims, output_dims)
-            # We transpose to get (output_dims, input_dims) to match weight shape
+            # Store original dtype to preserve precision
+            original_dtype = base_linear.weight.dtype if not isinstance(base_linear, nn.QuantizedLinear) else mx.float16
+
+            # W += scale * (lora_A @ lora_B).T
             lora_delta = mx.matmul(lora_layer.lora_A, lora_layer.lora_B).T
-            merged_weight = base_weight + lora_layer.scale * lora_delta
+            base_linear.weight = (base_linear.weight + lora_layer.scale * lora_delta).astype(original_dtype)
 
-            # Create new linear layer with merged weights
-            output_dims, input_dims = merged_weight.shape
-            baked = nn.Linear(input_dims, output_dims, bias=hasattr(base_linear, "bias"))
-            baked.weight = merged_weight
-            if hasattr(base_linear, "bias"):
-                baked.bias = base_linear.bias
+            # Force evaluation to free computation graph
+            mx.eval(base_linear.weight)
 
-            return baked
+            # Return the modified base_linear (not a new object!)
+            return base_linear
 
         else:
             raise TypeError(f"Unsupported layer type: {type(lora_layer)}")
