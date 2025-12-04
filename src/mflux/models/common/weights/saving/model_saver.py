@@ -63,14 +63,19 @@ class ModelSaver:
             if remaining_loras > 0:
                 print(f"  ⚠️  Warning: {remaining_loras} LoRA layer(s) still present after baking")
 
-            # Aggressive cleanup after baking
-            mx.eval(model.parameters())
-            mx.clear_cache()
-            import gc
+        # Aggressive cleanup after baking
+        mx.clear_cache()
+        import gc
 
-            gc.collect()
+        gc.collect()
 
-        weights = dict(tree_flatten(model.parameters()))
+        # Force re-evaluation of the model's parameter tree
+        # This ensures tree_flatten only sees the current state
+        mx.eval(model.parameters())
+
+        # Collect weights, filtering out any LoRA-related parameters
+        all_weights = dict(tree_flatten(model.parameters()))
+        weights = {k: v for k, v in all_weights.items() if "lora" not in k.lower()}
 
         # Debug: report weight statistics
         total_params = sum(w.size for w in weights.values())
