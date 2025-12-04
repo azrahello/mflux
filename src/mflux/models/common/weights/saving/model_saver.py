@@ -82,20 +82,8 @@ class ModelSaver:
         # This ensures tree_flatten only sees the current state
         mx.eval(model.parameters())
 
-        # Collect weights, filtering out any LoRA-related parameters
-        all_weights = dict(tree_flatten(model.parameters()))
-        weights = {k: v for k, v in all_weights.items() if "lora" not in k.lower()}
-
-        # Clear all_weights immediately to reduce memory pressure
-        del all_weights
-        gc.collect()
-
-        shards = ModelSaver._split_weights(weights)
-
-        # Clear original weights dict after splitting to free memory
-        del weights
-        gc.collect()
-        mx.clear_cache()
+        # Build shards incrementally to avoid loading all weights in memory at once
+        shards = ModelSaver._split_weights_incremental(model)
 
         # Build weight_map for index.json (maps each weight key to its shard file)
         weight_map = {}
@@ -143,6 +131,47 @@ class ModelSaver:
         }
         with open(path / "model.safetensors.index.json", "w") as f:
             json.dump(index_data, f, indent=2)
+
+    @staticmethod
+    def _split_weights_incremental(model: nn.Module, max_file_size_gb: int = 2) -> list[dict]:
+        """
+        Split model weights into shards incrementally to minimize memory usage.
+        Processes parameters one at a time instead of loading all into memory.
+        """
+        import gc
+
+        max_file_size_bytes = max_file_size_gb << 30
+        shards: list[dict] = []
+        shard: dict = {}
+        shard_size = 0
+
+        # Get parameters as an iterator (lazy evaluation)
+        for key, value in tree_flatten(model.parameters()):
+            # Skip LoRA-related parameters
+            if "lora" in key.lower():
+                continue
+
+            # Evaluate this specific weight to materialize it
+            mx.eval(value)
+
+            # Check if adding this weight would exceed shard size
+            if shard_size + value.nbytes > max_file_size_bytes and shard:
+                shards.append(shard)
+                shard = {}
+                shard_size = 0
+
+                # Cleanup after creating a shard
+                gc.collect()
+                mx.clear_cache()
+
+            shard[key] = value
+            shard_size += value.nbytes
+
+        # Don't forget the last shard
+        if shard:
+            shards.append(shard)
+
+        return shards
 
     @staticmethod
     def _split_weights(weights: dict, max_file_size_gb: int = 2) -> list[dict]:
