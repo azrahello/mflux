@@ -249,14 +249,17 @@ class QwenLoRAMapping(LoRAMapping):
                     "transformer_blocks.{block}.txt_mod.1.lora_up.weight",
                     "diffusion_model.transformer_blocks.{block}.txt_mod.1.lora_B.weight",
                     "transformer_blocks.{block}.txt_mod.1.lora_B.default.weight",
+                    "lora_unet_transformer_blocks_{block}_txt_mod_1.lora_up.weight",
                 ],
                 possible_down_patterns=[
                     "transformer_blocks.{block}.txt_mod.1.lora_down.weight",
                     "diffusion_model.transformer_blocks.{block}.txt_mod.1.lora_A.weight",
                     "transformer_blocks.{block}.txt_mod.1.lora_A.default.weight",
+                    "lora_unet_transformer_blocks_{block}_txt_mod_1.lora_down.weight",
                 ],
                 possible_alpha_patterns=[
                     "transformer_blocks.{block}.txt_mod.1.alpha",
+                    "lora_unet_transformer_blocks_{block}_txt_mod_1.alpha",
                 ],
             ),
             LoRATarget(
@@ -265,14 +268,17 @@ class QwenLoRAMapping(LoRAMapping):
                     "transformer_blocks.{block}.img_mod.1.lora_up.weight",
                     "diffusion_model.transformer_blocks.{block}.img_mod.1.lora_B.weight",
                     "transformer_blocks.{block}.img_mod.1.lora_B.default.weight",
+                    "lora_unet_transformer_blocks_{block}_img_mod_1.lora_up.weight",
                 ],
                 possible_down_patterns=[
                     "transformer_blocks.{block}.img_mod.1.lora_down.weight",
                     "diffusion_model.transformer_blocks.{block}.img_mod.1.lora_A.weight",
                     "transformer_blocks.{block}.img_mod.1.lora_A.default.weight",
+                    "lora_unet_transformer_blocks_{block}_img_mod_1.lora_down.weight",
                 ],
                 possible_alpha_patterns=[
                     "transformer_blocks.{block}.img_mod.1.alpha",
+                    "lora_unet_transformer_blocks_{block}_img_mod_1.alpha",
                 ],
             ),
         ]
