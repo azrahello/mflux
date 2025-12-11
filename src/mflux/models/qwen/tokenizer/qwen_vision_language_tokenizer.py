@@ -120,7 +120,7 @@ class QwenVisionLanguageTokenizer:
         # Use the regular text-only template
         text_template = (
             "<|im_start|>system\n"
-            "Describe the image by detailing the color, shape, size, texture, quantity, text, "
+            "Describe the image by detailing the color, quantity, text, shape, size, texture, "
             "spatial relationships of the objects and background:<|im_end|>\n"
             "<|im_start|>user\n{}<|im_end|>\n"
             "<|im_start|>assistant\n"
