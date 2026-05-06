@@ -277,7 +277,6 @@ class TrainingTrainer:
                 width=preview_width,
                 height=preview_height,
                 steps=training_spec.steps,
-                guidance=training_spec.guidance,
                 image_paths=image_paths,
             )
             preview_name = preview_names[idx] if idx < len(preview_names) else None
