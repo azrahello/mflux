@@ -64,8 +64,6 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
             self.model.clip_text_encoder = None
         if hasattr(self.model, "t5_text_encoder"):
             self.model.t5_text_encoder = None
-        if hasattr(self.model, "text_encoder") and self.model.text_encoder is not None:
-            self.model.text_encoder = None
         if hasattr(self.model, "image_encoder") and self.model.image_encoder is not None:
             self.model.image_encoder = None
         if hasattr(self.model, "image_embedder") and self.model.image_embedder is not None:
