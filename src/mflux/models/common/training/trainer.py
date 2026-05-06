@@ -180,7 +180,6 @@ class TrainingTrainer:
                 # Free optimizer/gradient memory immediately after the update so
                 # that monitoring (image generation, save) runs with a clean slate.
                 if training_spec.low_ram:
-                    gc.collect()
                     mx.clear_cache()
 
             if training_state.should_plot_loss(training_spec):
