@@ -137,6 +137,7 @@ class TrainingTrainer:
             del validation_loss
             training_state.save(adapter, training_spec)
 
+        trainable_params = TrainingTrainer._get_trainable_params(adapter)
         grad_acc_steps = training_spec.training_loop.gradient_accumulation_steps
         accum_grads = None
         micro_step = 0
