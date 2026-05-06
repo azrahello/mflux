@@ -34,7 +34,6 @@ class ErnieImage(nn.Module):
         model_config: ModelConfig = ModelConfig.ernie_image_turbo(),
     ):
         super().__init__()
-        self._text_cache = None
         ErnieImageInitializer.init(
             model=self,
             model_config=model_config,
@@ -85,18 +84,11 @@ class ErnieImage(nn.Module):
             ),
         )
 
-        # Encode text — cache on (prompt, negative_prompt, guidance)
-        cache_key = (prompt, negative_prompt, config.guidance)
-        if self._text_cache is None or self._text_cache[0] != cache_key:
-            text_bth, text_lens = self._encode_prompts(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                guidance=config.guidance,
-            )
-            mx.eval(text_bth, text_lens)
-            self._text_cache = (cache_key, text_bth, text_lens)
-        else:
-            _, text_bth, text_lens = self._text_cache
+        text_bth, text_lens = self._encode_prompts(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            guidance=config.guidance,
+        )
 
         # Pre-compute positional encoding once — constant for this resolution + prompt length.
         # mx.eval materialises the tensors so mx.compile captures them as fixed buffers,
