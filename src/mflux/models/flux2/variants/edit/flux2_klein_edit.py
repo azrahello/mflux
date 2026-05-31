@@ -116,13 +116,14 @@ class Flux2KleinEdit(nn.Module):
         for step_idx, t in enumerate(config.time_steps):
             try:
                 if cache_enabled and step_idx == 0:
-                    # Step 0: full forward with [txt, target, ref]; extracts K/V cache.
+                    # Step 0: full forward [txt, target, ref]; populates KV cache.
                     kv_cache.configure(
                         mode="extract",
                         num_ref_tokens=image_latents.shape[1],
                         num_txt_tokens=prompt_embeds.shape[1],
                     )
-                    noise = predict(
+                    extract_predict = self._make_extract_predict(self.transformer, kv_cache)
+                    noise = extract_predict(
                         latents=latents,
                         image_latents=image_latents,
                         latent_ids=latent_ids,
@@ -133,10 +134,8 @@ class Flux2KleinEdit(nn.Module):
                         negative_text_ids=negative_text_ids,
                         guidance=guidance,
                         timestep=config.scheduler.timesteps[t],
-                        kv_cache=kv_cache,
                     )
                     # Build the cached-mode closure after the cache is populated.
-                    # kv_cache is captured in the closure so mx.compile can compile it.
                     kv_cache.configure(
                         mode="cached",
                         num_ref_tokens=image_latents.shape[1],
@@ -144,7 +143,7 @@ class Flux2KleinEdit(nn.Module):
                     )
                     cached_predict = self._make_cached_predict(self.transformer, kv_cache)
                 elif cache_enabled:
-                    # Steps 1+: target-only input; cached ref K/V spliced inside attention.
+                    # Steps 1+: target-only input; ref K/V spliced from cache.
                     noise = cached_predict(
                         latents=latents,
                         latent_ids=latent_ids,
@@ -228,11 +227,8 @@ class Flux2KleinEdit(nn.Module):
         return prompt_embeds, text_ids, negative_prompt_embeds, negative_text_ids
 
     def _predict(self, transformer):
-        # Full-input predict closure for the non-cache path (and for the
-        # step-0 extract pass when KV-cache is enabled). When the model is
-        # KV-cache aware we cannot compile this closure because the cache
-        # mode/state is a Python-object kwarg that ``mx.compile`` would
-        # freeze at trace time.
+        """Full-input predict for the no-KV-cache path. All args are arrays → compilable."""
+
         def predict(
             latents: mx.array,
             image_latents: mx.array,
@@ -244,7 +240,59 @@ class Flux2KleinEdit(nn.Module):
             negative_text_ids: mx.array | None,
             guidance: float,
             timestep: mx.array,
-            kv_cache: Flux2KVCache | None = None,
+        ) -> mx.array:
+            hidden_states = mx.concatenate([latents, image_latents], axis=1)
+            img_ids = mx.concatenate([latent_ids, image_latent_ids], axis=1)
+
+            noise = transformer(
+                hidden_states=hidden_states,
+                encoder_hidden_states=prompt_embeds,
+                timestep=timestep,
+                img_ids=img_ids,
+                txt_ids=text_ids,
+                guidance=None,
+            )
+            noise = noise[:, : latents.shape[1]]
+            if negative_prompt_embeds is not None and negative_text_ids is not None:
+                negative_noise = transformer(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=negative_prompt_embeds,
+                    timestep=timestep,
+                    img_ids=img_ids,
+                    txt_ids=negative_text_ids,
+                    guidance=None,
+                )
+                negative_noise = negative_noise[:, : latents.shape[1]]
+                noise = negative_noise + guidance * (noise - negative_noise)
+            return noise
+
+        if AppleSiliconUtil.is_m1_or_m2():
+            return predict
+        return mx.compile(predict)
+
+    @staticmethod
+    def _make_extract_predict(transformer, kv_cache: Flux2KVCache):
+        """Build a predict closure for step 0 (KV extract pass).
+
+        kv_cache is captured in the closure so mx.compile can compile the
+        function (all explicit arguments are arrays). mx.compile traces on
+        the first — and only — call per generation, during which the Python
+        code inside the transformer runs normally and kv_cache.store() is
+        called correctly. There are no subsequent compiled calls that would
+        skip those side-effects.
+        """
+
+        def predict(
+            latents: mx.array,
+            image_latents: mx.array,
+            latent_ids: mx.array,
+            image_latent_ids: mx.array,
+            prompt_embeds: mx.array,
+            text_ids: mx.array,
+            negative_prompt_embeds: mx.array | None,
+            negative_text_ids: mx.array | None,
+            guidance: float,
+            timestep: mx.array,
         ) -> mx.array:
             hidden_states = mx.concatenate([latents, image_latents], axis=1)
             img_ids = mx.concatenate([latent_ids, image_latent_ids], axis=1)
@@ -273,7 +321,7 @@ class Flux2KleinEdit(nn.Module):
                 noise = negative_noise + guidance * (noise - negative_noise)
             return noise
 
-        if AppleSiliconUtil.is_m1_or_m2() or self.model_config.supports_kv_cache:
+        if AppleSiliconUtil.is_m1_or_m2():
             return predict
         return mx.compile(predict)
 
