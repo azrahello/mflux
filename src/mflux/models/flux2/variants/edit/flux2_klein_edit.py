@@ -135,13 +135,6 @@ class Flux2KleinEdit(nn.Module):
                         guidance=guidance,
                         timestep=config.scheduler.timesteps[t],
                     )
-                    # Build the cached-mode closure after the cache is populated.
-                    kv_cache.configure(
-                        mode="cached",
-                        num_ref_tokens=image_latents.shape[1],
-                        num_txt_tokens=prompt_embeds.shape[1],
-                    )
-                    cached_predict = self._make_cached_predict(self.transformer, kv_cache)
                 elif cache_enabled:
                     # Steps 1+: target-only input; ref K/V spliced from cache.
                     noise = cached_predict(
@@ -175,6 +168,15 @@ class Flux2KleinEdit(nn.Module):
 
                 ctx.in_loop(t, latents)
                 mx.eval(latents)
+                # Build the cached-mode closure AFTER mx.eval so the K/V arrays
+                # are fully materialized before mx.compile captures them as constants.
+                if cache_enabled and step_idx == 0:
+                    kv_cache.configure(
+                        mode="cached",
+                        num_ref_tokens=image_latents.shape[1],
+                        num_txt_tokens=prompt_embeds.shape[1],
+                    )
+                    cached_predict = self._make_cached_predict(self.transformer, kv_cache)
             except KeyboardInterrupt:  # noqa: PERF203
                 ctx.interruption(t, latents)
                 raise StopImageGenerationException(
@@ -321,9 +323,7 @@ class Flux2KleinEdit(nn.Module):
                 noise = negative_noise + guidance * (noise - negative_noise)
             return noise
 
-        if AppleSiliconUtil.is_m1_or_m2():
-            return predict
-        return mx.compile(predict)
+        return predict
 
     @staticmethod
     def _make_cached_predict(transformer, kv_cache: Flux2KVCache):
