@@ -67,7 +67,10 @@ class CallbackManager:
         cache_limit_bytes = CallbackManager._resolve_cache_limit_bytes(getattr(args, "mlx_cache_limit_gb", None))
         if args.low_ram:
             seeds = getattr(args, "seed", []) or []
-            images = getattr(args, "image_path", [])
+            # Support both --image-path (singular, most CLIs) and --image-paths
+            # (plural, flux2 edit CLI). Fall back to the other if the primary is
+            # absent or empty so keep_transformer is correct for both entry points.
+            images = getattr(args, "image_paths", None) or getattr(args, "image_path", [])
             if not isinstance(images, list):
                 images = [images] if images is not None else []
             keep_transformer = len(seeds) > 1 or len(images) > 1

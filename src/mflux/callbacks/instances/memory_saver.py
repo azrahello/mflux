@@ -13,6 +13,7 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
     def __init__(self, model, keep_transformer: bool = True, cache_limit_bytes: int = 1000**3, args=None):
         self.model = model
         self.keep_transformer = keep_transformer
+        self._cache_limit_bytes = cache_limit_bytes
         self.peak_memory: int = 0
         # Only set tiling if the model has not already configured it.
         # Some models (e.g. ERNIE-Image) explicitly disable tiling by setting
@@ -20,7 +21,6 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
         # VAE decode artifacts such as red-channel banding.
         if model.tiling_config is None:
             self.model.tiling_config = TilingConfig()
-        mx.set_cache_limit(cache_limit_bytes)
         mx.clear_cache()
         mx.reset_peak_memory()
 
@@ -56,6 +56,14 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
     ) -> None:
         self.peak_memory = mx.get_peak_memory()
         if not self.keep_transformer:
+            # Tighten the cache limit only now: the transformer is being dropped
+            # so the remaining budget is just the VAE. Applying this limit during
+            # the denoising loop is counterproductive on large models (9B+) because
+            # the 1 GB free-list budget forces fresh OS allocations for every
+            # intermediate activation, which can raise peak memory rather than
+            # lower it.
+            mx.set_cache_limit(self._cache_limit_bytes)
+            mx.clear_cache()
             self._delete_transformer()
 
     def _delete_text_encoders(self) -> None:

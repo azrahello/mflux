@@ -182,6 +182,12 @@ class Flux2KleinEdit(nn.Module):
 
         ctx.after_loop(latents)
 
+        # Free KV tensors before VAE decode: they are only needed inside the
+        # denoising loop and holding them through decode wastes memory on a 9B model.
+        if kv_cache is not None:
+            kv_cache.reset()
+            mx.clear_cache()
+
         # 6. Decode latents
         packed_latents = latents.reshape(latents.shape[0], latent_height, latent_width, latents.shape[-1]).transpose(0, 3, 1, 2)  # fmt: off
         decoded = self.vae.decode_packed_latents(packed_latents)
