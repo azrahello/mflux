@@ -271,7 +271,7 @@ class Flux2KleinEdit(nn.Module):
                 noise = negative_noise + guidance * (noise - negative_noise)
             return noise
 
-        if AppleSiliconUtil.is_m1_or_m2() or self.model_config.supports_kv_cache:
+        if AppleSiliconUtil.is_m1_or_m2():
             return predict
         return mx.compile(predict)
 
@@ -280,9 +280,12 @@ class Flux2KleinEdit(nn.Module):
         """Predict closure for KV-cache cached mode.
 
         Input is target-only ``latents`` (no ``image_latents`` concat); the
-        attention layers splice cached reference K/V at the end. Not compiled
-        because ``kv_cache`` is mutable Python state that ``mx.compile`` would
-        freeze.
+        attention layers splice cached reference K/V at the end.
+
+        Safe to compile: kv_cache is passed as an argument and its K/V tensors
+        do not change between steps 1-3. mx.compile traces on the first call
+        (step 1) and reuses the graph on steps 2-3 with the same frozen K/V
+        arrays — which is correct because the cache is read-only in this mode.
         """
 
         def predict(
@@ -320,4 +323,6 @@ class Flux2KleinEdit(nn.Module):
                 noise = negative_noise + guidance * (noise - negative_noise)
             return noise
 
-        return predict
+        if AppleSiliconUtil.is_m1_or_m2():
+            return predict
+        return mx.compile(predict)
