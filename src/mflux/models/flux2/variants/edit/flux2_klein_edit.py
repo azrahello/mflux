@@ -112,11 +112,11 @@ class Flux2KleinEdit(nn.Module):
         ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
         ctx.before_loop(latents)
         predict = self._predict(self.transformer)
-        cached_predict = self._cached_predict(self.transformer) if cache_enabled else None
+        cached_predict = None
         for step_idx, t in enumerate(config.time_steps):
             try:
                 if cache_enabled and step_idx == 0:
-                    # Step 0: extract cache from the full [txt, target, ref] forward.
+                    # Step 0: full forward with [txt, target, ref]; extracts K/V cache.
                     kv_cache.configure(
                         mode="extract",
                         num_ref_tokens=image_latents.shape[1],
@@ -135,13 +135,16 @@ class Flux2KleinEdit(nn.Module):
                         timestep=config.scheduler.timesteps[t],
                         kv_cache=kv_cache,
                     )
-                elif cache_enabled:
-                    # Steps 1+: target-only input, splice cached ref K/V inside attention.
+                    # Build the cached-mode closure after the cache is populated.
+                    # kv_cache is captured in the closure so mx.compile can compile it.
                     kv_cache.configure(
                         mode="cached",
                         num_ref_tokens=image_latents.shape[1],
                         num_txt_tokens=prompt_embeds.shape[1],
                     )
+                    cached_predict = self._make_cached_predict(self.transformer, kv_cache)
+                elif cache_enabled:
+                    # Steps 1+: target-only input; cached ref K/V spliced inside attention.
                     noise = cached_predict(
                         latents=latents,
                         latent_ids=latent_ids,
@@ -151,7 +154,6 @@ class Flux2KleinEdit(nn.Module):
                         negative_text_ids=negative_text_ids,
                         guidance=guidance,
                         timestep=config.scheduler.timesteps[t],
-                        kv_cache=kv_cache,
                     )
                 else:
                     noise = predict(
@@ -271,21 +273,21 @@ class Flux2KleinEdit(nn.Module):
                 noise = negative_noise + guidance * (noise - negative_noise)
             return noise
 
-        if AppleSiliconUtil.is_m1_or_m2():
+        if AppleSiliconUtil.is_m1_or_m2() or self.model_config.supports_kv_cache:
             return predict
         return mx.compile(predict)
 
     @staticmethod
-    def _cached_predict(transformer):
-        """Predict closure for KV-cache cached mode.
+    def _make_cached_predict(transformer, kv_cache: Flux2KVCache):
+        """Build a predict closure for KV-cache cached mode (steps 1+).
 
-        Input is target-only ``latents`` (no ``image_latents`` concat); the
-        attention layers splice cached reference K/V at the end.
-
-        Safe to compile: kv_cache is passed as an argument and its K/V tensors
-        do not change between steps 1-3. mx.compile traces on the first call
-        (step 1) and reuses the graph on steps 2-3 with the same frozen K/V
-        arrays — which is correct because the cache is read-only in this mode.
+        kv_cache is captured in the closure rather than passed as an argument
+        so that mx.compile can compile the function. mx.compile freezes
+        captured Python state at trace time; since the K/V tensors are
+        read-only across steps 1-3, the frozen state is always correct.
+        A fresh closure (and a fresh compile trace) is created after step 0
+        each time generate_image is called, so different generations never
+        share stale cached arrays.
         """
 
         def predict(
@@ -297,7 +299,6 @@ class Flux2KleinEdit(nn.Module):
             negative_text_ids: mx.array | None,
             guidance: float,
             timestep: mx.array,
-            kv_cache: Flux2KVCache,
         ) -> mx.array:
             noise = transformer(
                 hidden_states=latents,
