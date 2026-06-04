@@ -112,6 +112,8 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
 
     def _delete_text_encoders(self) -> None:
         # repeated image generation only works with the same prompt (cache)
+        if hasattr(self.model, "text_encoder") and self.model.text_encoder is not None:
+            self.model.text_encoder = None
         if hasattr(self.model, "clip_text_encoder"):
             self.model.clip_text_encoder = None
         if hasattr(self.model, "t5_text_encoder"):
