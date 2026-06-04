@@ -7,7 +7,7 @@ from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.flux2.flux2_initializer import Flux2Initializer
 from mflux.models.flux2.model.flux2_text_encoder.qwen3_text_encoder import Qwen3TextEncoder
-from mflux.models.flux2.model.flux2_transformer.flux2_kv_cache import Flux2KVCache, Flux2KVReadOnlyView
+from mflux.models.flux2.model.flux2_transformer.flux2_kv_cache import Flux2KVCache, Flux2KVExtractMeta, Flux2KVReadOnlyView
 from mflux.models.flux2.model.flux2_transformer.transformer import Flux2Transformer
 from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
 from mflux.models.flux2.variants.edit.flux2_klein_edit_helpers import _Flux2KleinEditHelpers
@@ -42,10 +42,10 @@ class Flux2KleinEdit(nn.Module):
         self._compiled_predict = None
 
         # Persistent KV-cache state — one pre-allocated buffer set per output resolution.
-        # Buffers are updated in-place each generation; _compiled_cached_predict is rebuilt
-        # after each extract pass so it captures fresh K/V constants.
+        # Both compiled functions are invalidated when resolution changes.
         self._kv_cache: Flux2KVCache | None = None
         self._kv_resolution: tuple[int, int] | None = None
+        self._compiled_extract_predict = None
         self._compiled_cached_predict = None
 
     def generate_image(
@@ -125,6 +125,7 @@ class Flux2KleinEdit(nn.Module):
                     head_dim=ref_attn.dim_head,
                 )
                 self._kv_resolution = resolution
+                self._compiled_extract_predict = None
                 self._compiled_cached_predict = None
 
         kv_cache = self._kv_cache if cache_enabled else None
@@ -140,14 +141,14 @@ class Flux2KleinEdit(nn.Module):
         for step_idx, t in enumerate(config.time_steps):
             try:
                 if cache_enabled and step_idx == 0:
-                    # Step 0: full forward [txt, target, ref]; populates KV cache.
-                    kv_cache.configure(
-                        mode="extract",
-                        num_ref_tokens=image_latents.shape[1],
-                        num_txt_tokens=prompt_embeds.shape[1],
-                    )
-                    extract_predict = self._make_extract_predict(self.transformer, kv_cache)
-                    noise = extract_predict(
+                    # Step 0: full forward [txt, target, ref]; extract ref K/V.
+                    if self._compiled_extract_predict is None:
+                        self._compiled_extract_predict = self._make_extract_predict(
+                            transformer=self.transformer,
+                            num_ref_tokens=int(image_latents.shape[1]),
+                            num_txt_tokens=int(prompt_embeds.shape[1]),
+                        )
+                    result = self._compiled_extract_predict(
                         latents=latents,
                         image_latents=image_latents,
                         latent_ids=latent_ids,
@@ -159,6 +160,16 @@ class Flux2KleinEdit(nn.Module):
                         guidance=guidance,
                         timestep=config.scheduler.timesteps[t],
                     )
+                    noise = result[0]
+                    flat_kv = list(result[1:])
+                    num_double = len(kv_cache.double_keys)
+                    for _i in range(num_double):
+                        kv_cache.double_keys[_i] = flat_kv[2 * _i]
+                        kv_cache.double_values[_i] = flat_kv[2 * _i + 1]
+                    _off = 2 * num_double
+                    for _i in range(len(kv_cache.single_keys)):
+                        kv_cache.single_keys[_i] = flat_kv[_off + 2 * _i]
+                        kv_cache.single_values[_i] = flat_kv[_off + 2 * _i + 1]
                 elif cache_enabled:
                     # Steps 1+: target-only input; ref K/V spliced from cache.
                     noise = self._compiled_cached_predict(
@@ -196,9 +207,9 @@ class Flux2KleinEdit(nn.Module):
 
                 ctx.in_loop(t, latents)
                 if cache_enabled and step_idx == 0:
-                    # Materialise latents + all K/V buffers in one Metal pass.
-                    # The buffers must be concrete before mx.compile captures them
-                    # as inputs in _make_cached_predict.
+                    # Materialise latents + all K/V arrays in one Metal pass so
+                    # they are concrete before being passed as arguments to the
+                    # compiled cached predict.
                     mx.eval(
                         latents,
                         *kv_cache.double_keys,
@@ -211,9 +222,6 @@ class Flux2KleinEdit(nn.Module):
                         num_ref_tokens=image_latents.shape[1],
                         num_txt_tokens=prompt_embeds.shape[1],
                     )
-                    # Build once per resolution. K/V arrays are passed as explicit
-                    # function arguments on every call, so the same compiled Metal
-                    # graph handles all generations without retracing.
                     if self._compiled_cached_predict is None:
                         self._compiled_cached_predict = self._make_cached_predict(self.transformer)
                 else:
@@ -308,14 +316,21 @@ class Flux2KleinEdit(nn.Module):
         return mx.compile(predict)
 
     @staticmethod
-    def _make_extract_predict(transformer, kv_cache: Flux2KVCache):
-        """Build the step-0 predict closure (KV extract pass).
+    def _make_extract_predict(transformer, num_ref_tokens: int, num_txt_tokens: int):
+        """Build the compiled step-0 predict closure (KV extract pass).
 
-        Not compiled: this path runs exactly once per generation, so there is
-        nothing to amortise. Running uncompiled also avoids the mx.compile
-        limitation where [:] side-effects on captured arrays are not visible
-        to the Python wrappers after the compiled call returns.
+        The transformer is called with collect_kv=True so it returns
+        (hidden_states, flat_kv_list) where flat_kv_list = [dk0, dv0, dk1, dv1,
+        ..., sk0, sv0, ...]. The function returns (noise, *flat_kv) so mx.compile
+        can include all K/V arrays in the compiled Metal graph output — no side
+        effects, no outputs= needed.
+
+        Compiled once per resolution and reused across generations.
         """
+        kv_meta = Flux2KVExtractMeta(
+            num_ref_tokens=num_ref_tokens,
+            num_txt_tokens=num_txt_tokens,
+        )
 
         def predict(
             latents: mx.array,
@@ -328,35 +343,41 @@ class Flux2KleinEdit(nn.Module):
             negative_text_ids: mx.array | None,
             guidance: float,
             timestep: mx.array,
-        ) -> mx.array:
+        ):
             hidden_states = mx.concatenate([latents, image_latents], axis=1)
             img_ids = mx.concatenate([latent_ids, image_latent_ids], axis=1)
 
-            noise = transformer(
+            noise_hidden, flat_kv = transformer(
                 hidden_states=hidden_states,
                 encoder_hidden_states=prompt_embeds,
                 timestep=timestep,
                 img_ids=img_ids,
                 txt_ids=text_ids,
                 guidance=None,
-                kv_cache=kv_cache,
+                kv_cache=kv_meta,
+                collect_kv=True,
             )
-            noise = noise[:, : latents.shape[1]]
+            noise = noise_hidden[:, : latents.shape[1]]
             if negative_prompt_embeds is not None and negative_text_ids is not None:
-                negative_noise = transformer(
+                # Negative pass: no K/V collection — use collect_kv=False so the
+                # transformer returns a plain array and does not override flat_kv.
+                negative_noise_hidden = transformer(
                     hidden_states=hidden_states,
                     encoder_hidden_states=negative_prompt_embeds,
                     timestep=timestep,
                     img_ids=img_ids,
                     txt_ids=negative_text_ids,
                     guidance=None,
-                    kv_cache=None,  # negative forward must not overwrite cached ref K/V
+                    kv_cache=None,
+                    collect_kv=False,
                 )
-                negative_noise = negative_noise[:, : latents.shape[1]]
+                negative_noise = negative_noise_hidden[:, : latents.shape[1]]
                 noise = negative_noise + guidance * (noise - negative_noise)
-            return noise
+            return (noise, *flat_kv)
 
-        return predict
+        if AppleSiliconUtil.is_m1_or_m2():
+            return predict
+        return mx.compile(predict)
 
     @staticmethod
     def _make_cached_predict(transformer):

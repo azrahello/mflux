@@ -40,7 +40,7 @@ class Flux2TransformerBlock(nn.Module):
         norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states)
         norm_encoder_hidden_states = (1 + c_scale_msa) * norm_encoder_hidden_states + c_shift_msa
 
-        attn_output, encoder_attn_output = self.attn(
+        attn_output, encoder_attn_output, ref_k, ref_v = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
@@ -59,4 +59,4 @@ class Flux2TransformerBlock(nn.Module):
         norm_encoder_hidden_states = (1 + c_scale_mlp) * norm_encoder_hidden_states + c_shift_mlp
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp * self.ff_context(norm_encoder_hidden_states)
 
-        return encoder_hidden_states, hidden_states
+        return encoder_hidden_states, hidden_states, ref_k, ref_v

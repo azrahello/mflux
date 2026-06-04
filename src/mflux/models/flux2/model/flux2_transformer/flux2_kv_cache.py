@@ -114,6 +114,22 @@ class Flux2KVCache:
         return self.mode == "cached"
 
 
+class Flux2KVExtractMeta:
+    """Minimal metadata object for the compiled extract pass.
+
+    Attention layers read mode and num_ref_tokens from this object to decide
+    which tokens to extract. K/V arrays are NOT stored here — they are
+    returned as explicit outputs by the transformer and collected by the
+    caller (_make_extract_predict).
+    """
+
+    mode: str = "extract"
+
+    def __init__(self, num_ref_tokens: int, num_txt_tokens: int = 0) -> None:
+        self.num_ref_tokens = num_ref_tokens
+        self.num_txt_tokens = num_txt_tokens
+
+
 class Flux2KVReadOnlyView:
     """Lightweight read-only K/V view for the compiled cached predict.
 

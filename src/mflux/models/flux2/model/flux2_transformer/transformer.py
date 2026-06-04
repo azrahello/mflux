@@ -74,7 +74,8 @@ class Flux2Transformer(nn.Module):
         txt_ids: mx.array,
         guidance: mx.array | float | int | None = None,
         kv_cache: Flux2KVCache | None = None,
-    ) -> mx.array:
+        collect_kv: bool = False,
+    ) -> mx.array | tuple[mx.array, list[mx.array]]:
         if not isinstance(timestep, mx.array):
             timestep = mx.array(timestep, dtype=hidden_states.dtype)
         if timestep.ndim == 0:
@@ -110,8 +111,10 @@ class Flux2Transformer(nn.Module):
         temb_mod_params_img = self.double_stream_modulation_img(temb)
         temb_mod_params_txt = self.double_stream_modulation_txt(temb)
 
+        flat_kv: list[mx.array] = []
+
         for idx, block in enumerate(self.transformer_blocks):
-            encoder_hidden_states, hidden_states = block(
+            encoder_hidden_states, hidden_states, ref_k, ref_v = block(
                 hidden_states=hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 temb_mod_params_img=temb_mod_params_img,
@@ -120,20 +123,27 @@ class Flux2Transformer(nn.Module):
                 kv_cache=kv_cache,
                 kv_cache_layer_idx=idx,
             )
+            if collect_kv and ref_k is not None:
+                flat_kv.extend([ref_k, ref_v])
 
         hidden_states = mx.concatenate([encoder_hidden_states, hidden_states], axis=1)
 
         temb_mod_params_single = self.single_stream_modulation(temb)[0]
         for idx, block in enumerate(self.single_transformer_blocks):
-            hidden_states = block(
+            hidden_states, ref_k, ref_v = block(
                 hidden_states=hidden_states,
                 temb_mod_params=temb_mod_params_single,
                 image_rotary_emb=concat_rotary_emb,
                 kv_cache=kv_cache,
                 kv_cache_layer_idx=idx,
             )
+            if collect_kv and ref_k is not None:
+                flat_kv.extend([ref_k, ref_v])
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
         hidden_states = self.norm_out(hidden_states, temb)
         hidden_states = self.proj_out(hidden_states)
+
+        if collect_kv:
+            return hidden_states, flat_kv
         return hidden_states

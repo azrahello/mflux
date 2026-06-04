@@ -70,15 +70,15 @@ class Flux2Attention(nn.Module):
             cos, sin = image_rotary_emb
             query, key = AttentionUtils.apply_rope_bshd(query, key, cos, sin)
 
+        ref_k = ref_v = None
         if kv_cache is not None and kv_cache.mode == "extract":
-            # We have the full `[txt, target, ref]` input; the trailing
-            # `num_ref_tokens` slice along the sequence dim is the static
-            # reference K/V we want to cache.
+            # Slice the trailing num_ref_tokens from the full [txt, target, ref]
+            # sequence. Returned to the caller instead of stored as a side effect
+            # so the extract predict can be compiled with mx.compile.
             ref_count = kv_cache.num_ref_tokens
             if ref_count > 0:
                 ref_k = key[:, :, -ref_count:, :]
                 ref_v = value[:, :, -ref_count:, :]
-                kv_cache.store("double", kv_cache_layer_idx, ref_k, ref_v)
 
         if kv_cache is not None and kv_cache.mode == "cached":
             # Input is `[txt, target]` (no ref). Splice cached ref K/V at the
@@ -104,4 +104,4 @@ class Flux2Attention(nn.Module):
             encoder_hidden_states = self.to_add_out(encoder_hidden_states)
 
         hidden_states = self.to_out(hidden_states)
-        return hidden_states, encoder_hidden_states
+        return hidden_states, encoder_hidden_states, ref_k, ref_v
