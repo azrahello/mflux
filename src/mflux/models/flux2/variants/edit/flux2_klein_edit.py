@@ -39,6 +39,14 @@ class Flux2KleinEdit(nn.Module):
             lora_scales=lora_scales,
             model_config=model_config or ModelConfig.flux2_klein_4b(),
         )
+        self._compiled_predict = None
+
+        # Persistent KV-cache state — one pre-allocated buffer set per output resolution.
+        # Buffers are updated in-place each generation; _compiled_cached_predict is rebuilt
+        # after each extract pass so it captures fresh K/V constants.
+        self._kv_cache: Flux2KVCache | None = None
+        self._kv_resolution: tuple[int, int] | None = None
+        self._compiled_cached_predict = None
 
     def generate_image(
         self,
@@ -101,18 +109,34 @@ class Flux2KleinEdit(nn.Module):
             and image_latents is not None
             and image_latents.shape[1] > 0
         )
-        kv_cache: Flux2KVCache | None = None
+
+        # Initialise or reuse the persistent KV-cache. A new object (and new
+        # compiled cached-predict) is needed only when the output resolution
+        # changes (different K/V buffer shape).
         if cache_enabled:
-            kv_cache = Flux2KVCache(
-                num_double_layers=len(self.transformer.transformer_blocks),
-                num_single_layers=len(self.transformer.single_transformer_blocks),
-            )
+            resolution = (config.height, config.width)
+            if self._kv_cache is None or self._kv_resolution != resolution:
+                ref_attn = self.transformer.transformer_blocks[0].attn
+                self._kv_cache = Flux2KVCache(
+                    num_double_layers=len(self.transformer.transformer_blocks),
+                    num_single_layers=len(self.transformer.single_transformer_blocks),
+                    num_ref_tokens=image_latents.shape[1],
+                    num_heads=ref_attn.heads,
+                    head_dim=ref_attn.dim_head,
+                )
+                self._kv_resolution = resolution
+                self._compiled_cached_predict = None
+
+        kv_cache = self._kv_cache if cache_enabled else None
 
         # 4. Denoising loop
         ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
         ctx.before_loop(latents)
-        predict = self._predict(self.transformer)
-        cached_predict = None
+        predict = None
+        if not cache_enabled:
+            if self._compiled_predict is None:
+                self._compiled_predict = self._predict(self.transformer)
+            predict = self._compiled_predict
         for step_idx, t in enumerate(config.time_steps):
             try:
                 if cache_enabled and step_idx == 0:
@@ -137,7 +161,7 @@ class Flux2KleinEdit(nn.Module):
                     )
                 elif cache_enabled:
                     # Steps 1+: target-only input; ref K/V spliced from cache.
-                    noise = cached_predict(
+                    noise = self._compiled_cached_predict(
                         latents=latents,
                         latent_ids=latent_ids,
                         prompt_embeds=prompt_embeds,
@@ -167,16 +191,27 @@ class Flux2KleinEdit(nn.Module):
                 )
 
                 ctx.in_loop(t, latents)
-                mx.eval(latents)
-                # Build the cached-mode closure AFTER mx.eval so the K/V arrays
-                # are fully materialized before mx.compile captures them as constants.
                 if cache_enabled and step_idx == 0:
+                    # Materialise latents + all K/V buffers in one Metal pass.
+                    # The buffers must be concrete before mx.compile captures them
+                    # as inputs in _make_cached_predict.
+                    mx.eval(
+                        latents,
+                        *kv_cache.double_keys,
+                        *kv_cache.double_values,
+                        *kv_cache.single_keys,
+                        *kv_cache.single_values,
+                    )
                     kv_cache.configure(
                         mode="cached",
                         num_ref_tokens=image_latents.shape[1],
                         num_txt_tokens=prompt_embeds.shape[1],
                     )
-                    cached_predict = self._make_cached_predict(self.transformer, kv_cache)
+                    # Rebuild every generation: K/V constants differ per reference image,
+                    # so the compiled graph from the previous generation is stale.
+                    self._compiled_cached_predict = self._make_cached_predict(self.transformer, kv_cache)
+                else:
+                    mx.eval(latents)
             except KeyboardInterrupt:  # noqa: PERF203
                 ctx.interruption(t, latents)
                 raise StopImageGenerationException(
@@ -184,12 +219,6 @@ class Flux2KleinEdit(nn.Module):
                 )
 
         ctx.after_loop(latents)
-
-        # Free KV tensors before VAE decode: they are only needed inside the
-        # denoising loop and holding them through decode wastes memory on a 9B model.
-        if kv_cache is not None:
-            kv_cache.reset()
-            mx.clear_cache()
 
         # 6. Decode latents
         packed_latents = latents.reshape(latents.shape[0], latent_height, latent_width, latents.shape[-1]).transpose(0, 3, 1, 2)  # fmt: off
@@ -274,14 +303,12 @@ class Flux2KleinEdit(nn.Module):
 
     @staticmethod
     def _make_extract_predict(transformer, kv_cache: Flux2KVCache):
-        """Build a predict closure for step 0 (KV extract pass).
+        """Build the step-0 predict closure (KV extract pass).
 
-        kv_cache is captured in the closure so mx.compile can compile the
-        function (all explicit arguments are arrays). mx.compile traces on
-        the first — and only — call per generation, during which the Python
-        code inside the transformer runs normally and kv_cache.store() is
-        called correctly. There are no subsequent compiled calls that would
-        skip those side-effects.
+        Not compiled: this path runs exactly once per generation, so there is
+        nothing to amortise. Running uncompiled also avoids the mx.compile
+        limitation where [:] side-effects on captured arrays are not visible
+        to the Python wrappers after the compiled call returns.
         """
 
         def predict(
@@ -317,7 +344,7 @@ class Flux2KleinEdit(nn.Module):
                     img_ids=img_ids,
                     txt_ids=negative_text_ids,
                     guidance=None,
-                    kv_cache=kv_cache,
+                    kv_cache=None,  # negative forward must not overwrite cached ref K/V
                 )
                 negative_noise = negative_noise[:, : latents.shape[1]]
                 noise = negative_noise + guidance * (noise - negative_noise)
@@ -327,15 +354,11 @@ class Flux2KleinEdit(nn.Module):
 
     @staticmethod
     def _make_cached_predict(transformer, kv_cache: Flux2KVCache):
-        """Build a predict closure for KV-cache cached mode (steps 1+).
+        """Build the cached-mode predict closure for steps 1+.
 
-        kv_cache is captured in the closure rather than passed as an argument
-        so that mx.compile can compile the function. mx.compile freezes
-        captured Python state at trace time; since the K/V tensors are
-        read-only across steps 1-3, the frozen state is always correct.
-        A fresh closure (and a fresh compile trace) is created after step 0
-        each time generate_image is called, so different generations never
-        share stale cached arrays.
+        kv_cache is captured in the closure; all K/V arrays are frozen as
+        constants at the first call (trace time). The closure is rebuilt after
+        each extract pass so the constants reflect the current reference image.
         """
 
         def predict(

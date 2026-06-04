@@ -43,6 +43,7 @@ class Flux2Klein(nn.Module):
             lora_scales=lora_scales,
             model_config=model_config or ModelConfig.flux2_klein_4b(),
         )
+        self._compiled_predict = None
 
     def generate_image(
         self,
@@ -83,7 +84,9 @@ class Flux2Klein(nn.Module):
         # 3. Denoising loop
         ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
         ctx.before_loop(latents)
-        predict = self._predict(self.transformer)
+        if self._compiled_predict is None:
+            self._compiled_predict = self._predict(self.transformer)
+        predict = self._compiled_predict
         for t in config.time_steps:
             try:
                 # 3.t Predict the noise

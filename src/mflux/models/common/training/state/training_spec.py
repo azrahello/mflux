@@ -80,6 +80,7 @@ class TrainingLoopSpec:
     gradient_accumulation_steps: int = 1
     gradient_checkpointing: bool = False
     gradient_checkpointing_every_n: int = 1
+    timestep_weighting: bool = False
 
 
 @dataclass

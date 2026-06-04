@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import math
 import random
 import tempfile
 from pathlib import Path
@@ -96,7 +97,18 @@ class TrainingTrainer:
         )
 
         error = (clean_image + predicted_noise - pure_noise).square()
+        if training_spec.training_loop.timestep_weighting:
+            weight = TrainingTrainer._timestep_weight(t, config.num_inference_steps)
+            return (error * weight).mean()
         return error.mean()
+
+    @staticmethod
+    def _timestep_weight(t: int, num_steps: int) -> float:
+        # Bell-shaped Gaussian weighting centered at mid-timestep.
+        # Downweights near-clean (t≈0) and near-noise (t≈num_steps) timesteps
+        # where the loss gradient is weakest, and upweights the mid-range.
+        mid = num_steps / 2.0
+        return math.exp(-2.0 * ((t - mid) / num_steps) ** 2)
 
     @staticmethod
     def train(

@@ -10,19 +10,29 @@ from mflux.models.common.vae.tiling_config import TilingConfig
 
 
 class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
-    def __init__(self, model, keep_transformer: bool = True, cache_limit_bytes: int = 1000**3, args=None):
+    def __init__(
+        self,
+        model,
+        keep_transformer: bool = True,
+        cache_limit_bytes: int | None = 1000**3,
+        args=None,
+        num_seeds: int = 1,
+    ):
         self.model = model
         self.keep_transformer = keep_transformer
         self._cache_limit_bytes = cache_limit_bytes
+        self._num_seeds = num_seeds
         self.peak_memory: int = 0
-        # Only set tiling if the model has not already configured it.
-        # Some models (e.g. ERNIE-Image) explicitly disable tiling by setting
-        # tiling_config to a non-None sentinel; overwriting it here would cause
-        # VAE decode artifacts such as red-channel banding.
-        if model.tiling_config is None:
-            self.model.tiling_config = TilingConfig()
-        mx.clear_cache()
-        mx.reset_peak_memory()
+        if cache_limit_bytes is not None:
+            # Only set tiling if the model has not already configured it.
+            # Some models (e.g. ERNIE-Image) explicitly disable tiling by setting
+            # tiling_config to a non-None sentinel; overwriting it here would cause
+            # VAE decode artifacts such as red-channel banding.
+            if model.tiling_config is None:
+                self.model.tiling_config = TilingConfig()
+            mx.set_cache_limit(cache_limit_bytes)
+            mx.clear_cache()
+            mx.reset_peak_memory()
 
     def call_before_loop(
         self,
@@ -34,7 +44,13 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
         depth_image: PIL.Image.Image | None = None,
     ) -> None:
         self.peak_memory = mx.get_peak_memory()
-        self._delete_text_encoders()
+        self._free_stale_kv_cache()
+        # Only evict when safe: single-seed run, or embeddings are cached in prompt_cache
+        # (Flux1 caches embeddings so encoder isn't needed for subsequent seeds;
+        #  Flux2 re-encodes each call and has no prompt_cache — keep encoder for multi-seed)
+        has_cached_embeds = hasattr(self.model, "prompt_cache") and prompt in (self.model.prompt_cache or {})
+        if self._num_seeds <= 1 or has_cached_embeds:
+            self._delete_text_encoders()
 
     def call_in_loop(
         self,
@@ -55,6 +71,10 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
         config: Config,
     ) -> None:
         self.peak_memory = mx.get_peak_memory()
+        # Free K/V buffers here — before VAE decode — so they don't inflate peak
+        # memory during decode. call_before_loop also calls this as a safety net
+        # for generations interrupted by an exception.
+        self._free_stale_kv_cache()
         if not self.keep_transformer:
             # Tighten the cache limit only now: the transformer is being dropped
             # so the remaining budget is just the VAE. Applying this limit during
@@ -65,6 +85,30 @@ class MemorySaver(BeforeLoopCallback, InLoopCallback, AfterLoopCallback):
             mx.set_cache_limit(self._cache_limit_bytes)
             mx.clear_cache()
             self._delete_transformer()
+        else:
+            # Clear Metal cache between seeds — without a cache limit, MLX accumulates
+            # freed tensor buffers indefinitely across sequential denoising passes.
+            gc.collect()
+            mx.clear_cache()
+
+    def _free_stale_kv_cache(self) -> None:
+        """Free K/V arrays left over from the previous generation.
+
+        The persistent kv_cache on KV-cache models keeps the ref K/V arrays from
+        the last extract pass alive between generate_image calls. Zero them out
+        in-place ([:] = 0) rather than setting to None: the [:] assignment drops
+        the reference to the old Metal buffer (freeing it) while preserving Python
+        object identity, which is required by both mx.compile(outputs=kv_state) in
+        _make_extract_predict and mx.compile(inputs=kv_state) in _make_cached_predict.
+        """
+        kv = getattr(self.model, "_kv_cache", None)
+        if kv is None:
+            return
+        for slot in (kv.double_keys, kv.double_values, kv.single_keys, kv.single_values):
+            for i, arr in enumerate(slot):
+                if isinstance(arr, mx.array):
+                    slot[i][:] = 0
+        mx.clear_cache()
 
     def _delete_text_encoders(self) -> None:
         # repeated image generation only works with the same prompt (cache)

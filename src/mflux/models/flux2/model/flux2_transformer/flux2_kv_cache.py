@@ -19,6 +19,11 @@ mflux the post-concat sequence is ``[txt, target, ref]`` (because
 indices differ — we slice ``[:, :, num_txt + num_target :, :]`` in extract
 mode and splice the cached ref K/V at the *end* of the fresh K/V in cached
 mode.
+
+K/V slots are pre-allocated as mx.zeros buffers and updated in-place via
+``[:] =`` on each extract pass.  This preserves Python object identity so
+that ``mx.compile(fn, inputs=kv_state)`` can reuse a single compiled Metal
+graph across generations while reading fresh K/V values each time.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from __future__ import annotations
 from typing import Literal
 
 import mlx.core as mx
+
+from mflux.models.common.config.model_config import ModelConfig
 
 CacheMode = Literal["extract", "cached"]
 StreamType = Literal["double", "single"]
@@ -44,14 +51,29 @@ class Flux2KVCache:
     num_txt_tokens :
         Count of text-encoder tokens (also static across steps; needed in
         both modes so attention layers know where target tokens start).
+    double_keys, double_values :
+        Pre-allocated buffer lists for double-stream layers.
+    single_keys, single_values :
+        Pre-allocated buffer lists for single-stream layers.
     """
 
-    def __init__(self, num_double_layers: int, num_single_layers: int) -> None:
-        self._double: list[tuple[mx.array, mx.array] | None] = [None] * num_double_layers
-        self._single: list[tuple[mx.array, mx.array] | None] = [None] * num_single_layers
-        self.mode: CacheMode | None = None
-        self.num_ref_tokens: int = 0
+    def __init__(
+        self,
+        num_double_layers: int,
+        num_single_layers: int,
+        num_ref_tokens: int,
+        num_heads: int,
+        head_dim: int,
+    ) -> None:
+        shape = (1, num_heads, num_ref_tokens, head_dim)
+        dtype = ModelConfig.precision
+        self.double_keys:   list[mx.array] = [mx.zeros(shape, dtype=dtype) for _ in range(num_double_layers)]
+        self.double_values: list[mx.array] = [mx.zeros(shape, dtype=dtype) for _ in range(num_double_layers)]
+        self.single_keys:   list[mx.array] = [mx.zeros(shape, dtype=dtype) for _ in range(num_single_layers)]
+        self.single_values: list[mx.array] = [mx.zeros(shape, dtype=dtype) for _ in range(num_single_layers)]
+        self.num_ref_tokens: int = num_ref_tokens
         self.num_txt_tokens: int = 0
+        self.mode: CacheMode | None = None
 
     def configure(
         self,
@@ -67,33 +89,26 @@ class Flux2KVCache:
     # ------- store (extract mode) ----------------------------------------
 
     def store(self, stream: StreamType, layer_idx: int, key: mx.array, value: mx.array) -> None:
-        slot = (key, value)
+        # [:] preserves Python object identity (required for mx.compile inputs= tracking)
+        # while updating the underlying data. [...] would be equivalent but MLX does
+        # not support Ellipsis as an index type for __setitem__.
         if stream == "double":
-            self._double[layer_idx] = slot
+            self.double_keys[layer_idx][:] = key
+            self.double_values[layer_idx][:] = value
         elif stream == "single":
-            self._single[layer_idx] = slot
+            self.single_keys[layer_idx][:] = key
+            self.single_values[layer_idx][:] = value
         else:
             raise ValueError(f"Unknown stream {stream!r}")
 
     # ------- load (cached mode) ------------------------------------------
 
     def load(self, stream: StreamType, layer_idx: int) -> tuple[mx.array, mx.array]:
-        slot = self._double[layer_idx] if stream == "double" else self._single[layer_idx]
-        if slot is None:
-            raise RuntimeError(
-                f"KV cache slot for {stream} layer {layer_idx} not populated; "
-                "did you forget the extract pass on step 0?"
-            )
-        return slot
+        if stream == "double":
+            return self.double_keys[layer_idx], self.double_values[layer_idx]
+        return self.single_keys[layer_idx], self.single_values[layer_idx]
 
     # ------- inspection --------------------------------------------------
 
     def is_populated(self) -> bool:
-        return all(s is not None for s in self._double) and all(s is not None for s in self._single)
-
-    def reset(self) -> None:
-        self._double = [None] * len(self._double)
-        self._single = [None] * len(self._single)
-        self.mode = None
-        self.num_ref_tokens = 0
-        self.num_txt_tokens = 0
+        return self.mode == "cached"

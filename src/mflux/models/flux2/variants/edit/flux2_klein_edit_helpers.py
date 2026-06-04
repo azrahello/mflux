@@ -89,11 +89,11 @@ class _Flux2KleinEditHelpers:
     def prepare_reference_image_conditioning(
         *,
         vae: Flux2VAE,
-        tiling_config,
         image_paths: list[Path | str] | None = None,
         height: int,
         width: int,
         batch_size: int = 1,
+        tiling_config=None,
     ):
         if not image_paths:
             return None, None
