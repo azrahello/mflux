@@ -7,7 +7,7 @@ from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.flux2.flux2_initializer import Flux2Initializer
 from mflux.models.flux2.model.flux2_text_encoder.qwen3_text_encoder import Qwen3TextEncoder
-from mflux.models.flux2.model.flux2_transformer.flux2_kv_cache import Flux2KVCache
+from mflux.models.flux2.model.flux2_transformer.flux2_kv_cache import Flux2KVCache, Flux2KVReadOnlyView
 from mflux.models.flux2.model.flux2_transformer.transformer import Flux2Transformer
 from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
 from mflux.models.flux2.variants.edit.flux2_klein_edit_helpers import _Flux2KleinEditHelpers
@@ -170,6 +170,10 @@ class Flux2KleinEdit(nn.Module):
                         negative_text_ids=negative_text_ids,
                         guidance=guidance,
                         timestep=config.scheduler.timesteps[t],
+                        double_keys=kv_cache.double_keys,
+                        double_values=kv_cache.double_values,
+                        single_keys=kv_cache.single_keys,
+                        single_values=kv_cache.single_values,
                     )
                 else:
                     noise = predict(
@@ -207,9 +211,11 @@ class Flux2KleinEdit(nn.Module):
                         num_ref_tokens=image_latents.shape[1],
                         num_txt_tokens=prompt_embeds.shape[1],
                     )
-                    # Rebuild every generation: K/V constants differ per reference image,
-                    # so the compiled graph from the previous generation is stale.
-                    self._compiled_cached_predict = self._make_cached_predict(self.transformer, kv_cache)
+                    # Build once per resolution. K/V arrays are passed as explicit
+                    # function arguments on every call, so the same compiled Metal
+                    # graph handles all generations without retracing.
+                    if self._compiled_cached_predict is None:
+                        self._compiled_cached_predict = self._make_cached_predict(self.transformer)
                 else:
                     mx.eval(latents)
             except KeyboardInterrupt:  # noqa: PERF203
@@ -353,12 +359,18 @@ class Flux2KleinEdit(nn.Module):
         return predict
 
     @staticmethod
-    def _make_cached_predict(transformer, kv_cache: Flux2KVCache):
-        """Build the cached-mode predict closure for steps 1+.
+    def _make_cached_predict(transformer):
+        """Build the compiled cached-mode predict for steps 1+.
 
-        kv_cache is captured in the closure; all K/V arrays are frozen as
-        constants at the first call (trace time). The closure is rebuilt after
-        each extract pass so the constants reflect the current reference image.
+        K/V arrays are explicit function arguments (not closure captures) so
+        mx.compile can freeze only the transformer weights as constants and
+        reuse the same Metal graph across generations with fresh K/V values —
+        no retrace, no per-generation recompilation.
+
+        mx.compile(predict, inputs=kv_state) was attempted but MLX 0.31 raises
+        "uncaptured inputs" when any closure-captured array (here: transformer
+        weights) is not listed in inputs=.  Passing K/V as regular arguments
+        sidesteps this requirement entirely.
         """
 
         def predict(
@@ -370,7 +382,17 @@ class Flux2KleinEdit(nn.Module):
             negative_text_ids: mx.array | None,
             guidance: float,
             timestep: mx.array,
+            double_keys: list[mx.array],
+            double_values: list[mx.array],
+            single_keys: list[mx.array],
+            single_values: list[mx.array],
         ) -> mx.array:
+            kv_view = Flux2KVReadOnlyView(
+                double_keys=double_keys,
+                double_values=double_values,
+                single_keys=single_keys,
+                single_values=single_values,
+            )
             noise = transformer(
                 hidden_states=latents,
                 encoder_hidden_states=prompt_embeds,
@@ -378,7 +400,7 @@ class Flux2KleinEdit(nn.Module):
                 img_ids=latent_ids,
                 txt_ids=text_ids,
                 guidance=None,
-                kv_cache=kv_cache,
+                kv_cache=kv_view,
             )
             noise = noise[:, : latents.shape[1]]
             if negative_prompt_embeds is not None and negative_text_ids is not None:
@@ -389,7 +411,7 @@ class Flux2KleinEdit(nn.Module):
                     img_ids=latent_ids,
                     txt_ids=negative_text_ids,
                     guidance=None,
-                    kv_cache=kv_cache,
+                    kv_cache=kv_view,
                 )
                 negative_noise = negative_noise[:, : latents.shape[1]]
                 noise = negative_noise + guidance * (noise - negative_noise)

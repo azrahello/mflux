@@ -112,3 +112,38 @@ class Flux2KVCache:
 
     def is_populated(self) -> bool:
         return self.mode == "cached"
+
+
+class Flux2KVReadOnlyView:
+    """Lightweight read-only K/V view for the compiled cached predict.
+
+    K/V arrays are passed as explicit function arguments to the compiled
+    predict closure and wrapped here so the attention layers can call the
+    familiar load() interface.  Creating this object inside the compiled
+    function is pure Python — MLX only traces the array operations that
+    follow (mx.concatenate inside the attention layers).
+
+    mode is hardcoded to "cached"; store() is intentionally unsupported.
+    """
+
+    mode: str = "cached"
+
+    def __init__(
+        self,
+        double_keys: list[mx.array],
+        double_values: list[mx.array],
+        single_keys: list[mx.array],
+        single_values: list[mx.array],
+    ) -> None:
+        self._dk = double_keys
+        self._dv = double_values
+        self._sk = single_keys
+        self._sv = single_values
+
+    def load(self, stream: StreamType, layer_idx: int) -> tuple[mx.array, mx.array]:
+        if stream == "double":
+            return self._dk[layer_idx], self._dv[layer_idx]
+        return self._sk[layer_idx], self._sv[layer_idx]
+
+    def store(self, *_) -> None:
+        raise RuntimeError("store() is not allowed on a read-only KV view")
