@@ -7,7 +7,8 @@ from mflux.utils.dimension_resolver import DimensionResolver
 from mflux.utils.exceptions import PromptFileReadError, StopImageGenerationException
 from mflux.utils.prompt_util import PromptUtil
 
-# Krea-2 turbo defaults (reference: 8 steps, CFG 1.0, er_sde, shift 1.15).
+# Krea-2 turbo defaults (reference: 8 steps, CFG 1.0, er_sde; sigmas use the official
+# dynamic exponential shift, base/max 0.5/1.15 over image seq len 256..6400).
 DEFAULT_STEPS = 8
 DEFAULT_GUIDANCE = 1.0
 
