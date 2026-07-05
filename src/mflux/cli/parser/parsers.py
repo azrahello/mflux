@@ -45,6 +45,14 @@ def int_or_special_value(value) -> int | scale_factor.ScaleFactor:
         )
 
 
+def lora_init_kwargs_from_args(args: argparse.Namespace) -> dict[str, t.Any]:
+    return {
+        "lora_paths": args.lora_paths,
+        "lora_scales": args.lora_scales,
+        "bake_lora": args.bake_lora,
+    }
+
+
 def positive_float(value: str) -> float:
     try:
         parsed = float(value)
@@ -107,6 +115,12 @@ class CommandLineParser(argparse.ArgumentParser):
         lora_group.add_argument("--lora", dest="lora", action="append", nargs="+", default=None, metavar=("PATH", "SCALE"), help="Add a LoRA as an atomic PATH with optional SCALE (default 1.0). Repeatable: --lora A.safetensors 0.7 --lora B.safetensors. PATH accepts local files, HuggingFace repos (org/model), or collection format (repo:filename.safetensors). Preferred over --lora-paths/--lora-scales.")
         self.add_argument("--lora-paths", type=str, nargs="*", default=None, help="[DEPRECATED: use --lora] LoRA paths: local files, HuggingFace repos (org/model), or collection format (repo:filename.safetensors)")
         self.add_argument("--lora-scales", type=float, nargs="*", default=None, help="[DEPRECATED: use --lora] Scaling factor to adjust the impact of LoRA weights on the model. A value of 1.0 applies the LoRA weights as they are.")
+        lora_group.add_argument(
+            "--bake-lora",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Merge LoRA/LoKr deltas into base weights after load (default: on). Use --no-bake-lora to keep runtime adapters.",
+        )
 
     def add_conditioning_arguments(self) -> None:
         conditioning_group = self.add_argument_group("Conditioning configuration")
