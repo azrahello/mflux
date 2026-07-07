@@ -1,7 +1,9 @@
 import warnings
 
 from mflux.callbacks.callback_manager import CallbackManager
+from mflux.cli.defaults import defaults as ui_defaults
 from mflux.cli.parser.parsers import CommandLineParser
+from mflux.models.common.conditioning import ConditioningBands
 from mflux.models.common.config import ModelConfig
 from mflux.models.ideogram4.latent_creator import Ideogram4LatentCreator
 from mflux.models.ideogram4.model.ideogram4_scheduler import Ideogram4Scheduler
@@ -31,7 +33,20 @@ def main():
         action="store_true",
         help="Fail when an Ideogram 4 JSON caption has schema warnings.",
     )
+    parser.add_conditioning_arguments()
     args = parser.parse_args()
+
+    conditioning_weights = (
+        ConditioningBands.parse_weights(args.conditioning_weights)
+        if args.conditioning_weights
+        else ui_defaults.CONDITIONING_WEIGHTS_DEFAULT["ideogram4"]
+    )
+    conditioning_multiplier = (
+        args.conditioning_multiplier
+        if args.conditioning_multiplier is not None
+        else ui_defaults.CONDITIONING_MULTIPLIER_DEFAULT["ideogram4"]
+    )
+    guidance_schedule = args.guidance_schedule or ui_defaults.GUIDANCE_SCHEDULE_DEFAULT["ideogram4"]
 
     model_name = args.model or "ideogram4"
     if Ideogram4WeightDefinition.is_builtin_name(model_name):
@@ -74,6 +89,10 @@ def main():
                 height=height,
                 preset=args.preset,
                 strict_caption_validation=args.strict_caption_validation,
+                conditioning_weights=conditioning_weights,
+                conditioning_renormalize=args.conditioning_renormalize,
+                conditioning_multiplier=conditioning_multiplier,
+                guidance_schedule=guidance_schedule,
             )
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)
     except (StopImageGenerationException, PromptFileReadError) as exc:

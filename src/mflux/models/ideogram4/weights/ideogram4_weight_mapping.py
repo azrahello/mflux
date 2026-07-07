@@ -17,6 +17,10 @@ class Ideogram4WeightMapping(WeightMapping):
 
     @staticmethod
     def transform_text_encoder_key(key: str) -> str | None:
+        # Vision tower keys (visual.*) already match the text_encoder.visual
+        # submodule's attribute paths as-is, no prefix to strip.
+        if key.startswith("visual."):
+            return key
         if not key.startswith("language_model."):
             return None
         mapped = key[len("language_model.") :]

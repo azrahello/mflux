@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 from typing import Any, List
 
+import mlx.core as mx
+
 from mflux.models.common.config import ModelConfig
 from mflux.models.common.weights.loading.weight_definition import ComponentDefinition, TokenizerDefinition
+from mflux.models.common.weights.mapping.weight_transforms import WeightTransforms
 from mflux.models.flux2.weights.flux2_weight_mapping import Flux2WeightMapping
 from mflux.models.ideogram4.model.ideogram4_text_encoder import Ideogram4Tokenizer
 from mflux.models.ideogram4.weights.ideogram4_weight_mapping import Ideogram4WeightMapping
@@ -13,6 +16,38 @@ from mflux.models.ideogram4.weights.ideogram4_weight_mapping import Ideogram4Wei
 
 class Ideogram4WeightDefinition:
     FP8_TEXT_ENCODER_CONFIG_KEY = "ideogram_fp8_weight_only"
+
+    @staticmethod
+    def transform_te_weight(key: str, value):
+        value = Ideogram4WeightMapping.prepare_tensor(key, value)
+        # visual.patch_embed.proj.weight ships bf16 in PyTorch (O, I, kD, kH, kW)
+        # conv layout (unlike the fp8 Linear weights elsewhere in visual.*);
+        # only needs a layout transpose, no dequantization.
+        if key == "visual.patch_embed.proj.weight":
+            value = WeightTransforms.transpose_conv3d_weight(value)
+        return value
+
+    @staticmethod
+    def dequantize_visual_tree(node: Any) -> Any:
+        # The vision tower's Linear weights (visual.blocks.*, visual.merger.*,
+        # visual.deepstack_merger_list.*) ship as fp8 (uint8 weight + per-output-
+        # channel float32 weight_scale), same convention as Ideogram4Transformer's
+        # Fp8Linear. Qwen3VLVisionModel uses plain nn.Linear, so dequantize once at
+        # load time instead of writing an fp8-aware vision tower.
+        if isinstance(node, dict):
+            weight = node.get("weight")
+            scale = node.get("weight_scale")
+            if isinstance(weight, mx.array) and isinstance(scale, mx.array) and weight.dtype == mx.uint8:
+                dtype = ModelConfig.precision
+                dequantized = mx.from_fp8(weight, dtype=dtype) * scale.astype(dtype)[:, None]
+                node = dict(node)
+                node["weight"] = dequantized
+                del node["weight_scale"]
+                return node
+            return {k: Ideogram4WeightDefinition.dequantize_visual_tree(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [Ideogram4WeightDefinition.dequantize_visual_tree(v) for v in node]
+        return node
 
     @staticmethod
     def get_components() -> List[ComponentDefinition]:
@@ -43,9 +78,9 @@ class Ideogram4WeightDefinition:
                 hf_subdir="text_encoder",
                 loading_mode="fp8_safetensors",
                 skip_quantization=True,
-                weight_prefix_filters=["language_model."],
+                weight_prefix_filters=["language_model.", "visual."],
                 key_transform=Ideogram4WeightMapping.transform_text_encoder_key,
-                weight_transform=Ideogram4WeightMapping.prepare_tensor,
+                weight_transform=Ideogram4WeightDefinition.transform_te_weight,
             ),
         ]
 

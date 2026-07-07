@@ -3,6 +3,7 @@ from typing import Any
 import mlx.core as mx
 from mlx import nn
 
+from mflux.models.common.conditioning import ConditioningBands, GuidanceSchedule
 from mflux.models.common.config import Config, ModelConfig
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
@@ -53,6 +54,10 @@ class Ideogram4(nn.Module):
         preset: str | None = None,
         strict_caption_validation: bool = False,
         warn_on_caption_issues: bool = True,
+        conditioning_weights: list[float] | None = None,
+        conditioning_renormalize: bool = False,
+        conditioning_multiplier: float = 1.0,
+        guidance_schedule: str | None = None,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
             prompt,
@@ -70,6 +75,9 @@ class Ideogram4(nn.Module):
                 raise ValueError(f"num_inference_steps must be >= 1, got {num_inference_steps}")
             num_steps = num_inference_steps
             guidance_values = (float(guidance if guidance is not None else 7.0),) * num_steps
+        if guidance_schedule is not None:
+            points = GuidanceSchedule.parse_schedule(guidance_schedule)
+            guidance_values = tuple(GuidanceSchedule.schedule_to_per_step(points, num_steps))
         config = Config(
             width=width,
             height=height,
@@ -93,6 +101,12 @@ class Ideogram4(nn.Module):
             text_encoder=self.text_encoder,
             prompt_cache=self.prompt_cache,
         )
+        if conditioning_weights is not None:
+            llm_features = ConditioningBands.scale_bands(
+                llm_features, conditioning_weights, conditioning_renormalize, conditioning_multiplier
+            )
+        elif conditioning_multiplier != 1.0:
+            llm_features = llm_features * conditioning_multiplier
         z = Ideogram4LatentCreator.create_noise(
             seed=seed,
             width=config.width,

@@ -98,6 +98,19 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--lora-paths", type=str, nargs="*", default=None, help="[DEPRECATED: use --lora] LoRA paths: local files, HuggingFace repos (org/model), or collection format (repo:filename.safetensors)")
         self.add_argument("--lora-scales", type=float, nargs="*", default=None, help="[DEPRECATED: use --lora] Scaling factor to adjust the impact of LoRA weights on the model. A value of 1.0 applies the LoRA weights as they are.")
 
+    def add_conditioning_arguments(self) -> None:
+        conditioning_group = self.add_argument_group("Conditioning configuration")
+        conditioning_group.add_argument("--conditioning-weights", type=str, default=None, help="Comma-separated per-layer weights for the stacked text-encoder conditioning (e.g. '1.0,1.0,...,1.0'). Length must match the model's number of tapped layers. Default: model's neutral weights (no effect).")
+        conditioning_group.add_argument("--conditioning-renormalize", action="store_true", help="After applying --conditioning-weights, rescale the conditioning tensor back to its original RMS magnitude. Prevents uneven per-layer weights from inflating or collapsing overall conditioning strength (which can hurt prompt adherence / oversaturate colors). No effect with neutral (all-1.0) weights.")
+        conditioning_group.add_argument("--conditioning-multiplier", type=float, default=None, help="Uniform gain multiplied into the whole conditioning tensor, applied after --conditioning-weights and --conditioning-renormalize (equivalent to the reference rebalance node's 'multiplier' input). Default: model's default (1.0 = no effect).")
+        conditioning_group.add_argument("--guidance-schedule", type=str, default=None, help="Piecewise guidance schedule over the denoise steps, format 'start-end:value;...' with start/end in [0,1] (e.g. '0.0-0.5:1.0;0.5-1.0:0.8'). Overrides --guidance with a per-step value.")
+
+    def add_img_ref_arguments(self) -> None:
+        img_ref_group = self.add_argument_group("Reference image configuration")
+        img_ref_group.add_argument("--img-ref", type=str, nargs="+", default=None, metavar="PATH", help="One or more reference images conditioning generation via the text encoder's vision tower, Redux-style: the starting latent stays pure noise (distinct from --image, which noises an image into the starting latent). Also switches the prompt's system template to the image-edit one, so the same text encodes differently with and without --img-ref.")
+        img_ref_group.add_argument("--img-ref-detail", type=str, nargs="+", default=None, choices=["low", "normal", "high", "max"], metavar="TIER", help="Per-image detail tier for --img-ref, aligned by position (default 'normal' for any image without one).")
+        img_ref_group.add_argument("--img-ref-rebalance", action="store_true", help="Apply the edit-rebalance conditioning recipe to --img-ref generations: subject-band refocus plus dissimilarity guidance against the reference images, with a time-scheduled hand-off from plain text conditioning. Ignored when --img-ref is not set.")
+
     def _add_image_generator_common_arguments(self, supports_dimension_scale_factor=False) -> None:
         self.supports_image_generation = True
         if supports_dimension_scale_factor:
