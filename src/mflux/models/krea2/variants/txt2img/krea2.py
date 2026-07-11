@@ -192,7 +192,7 @@ class Krea2(nn.Module):
         # (it only depends on the embeds, not the timestep). Steps that modify
         # the raw embeds (per-step multiplier, crossover blend) fall back to
         # fusing in-loop inside the transformer.
-        dtype = Krea2._activation_dtype()
+        dtype = ModelConfig.precision
         fused_scheduled = [self.transformer.fuse_context(e.astype(dtype)) for e in scheduled_embeds]
         fused_weighted = None
         if weighted_embeds is not None:
@@ -371,20 +371,12 @@ class Krea2(nn.Module):
         return self.vae.decode(latents)
 
     @staticmethod
-    def _activation_dtype() -> mx.Dtype:
-        # DiT activation dtype at the transformer boundary. M1/M2 GPUs have no
-        # native bfloat16 (it is emulated and slower than fp32 there), so those
-        # chips keep the historical fp32 activations; newer chips run bf16
-        # natively and keep the bandwidth win.
-        return mx.float32 if AppleSiliconUtil.is_m1_or_m2() else ModelConfig.precision
-
-    @staticmethod
     def _predict(
         transformer: Krea2Transformer,
         neg_embeds: mx.array | None,
         ref_latents: list[mx.array] | None = None,
     ):
-        dtype = Krea2._activation_dtype()
+        dtype = ModelConfig.precision
         # Reference latents are constant for the whole generation: patchify them
         # once here instead of on every step (they also ride the compiled graph
         # as captured constants).
@@ -394,7 +386,7 @@ class Krea2(nn.Module):
             mx.eval(prepared_refs.tokens, prepared_refs.pos)
 
         def predict(latents: mx.array, timestep: mx.array, guidance_value: mx.array, embeds: mx.array) -> mx.array:
-            # Cast both DiT inputs to the activation dtype at the transformer
+            # Cast both DiT inputs to ModelConfig.precision at the transformer
             # boundary: the er_sde stepper mixes latents with fp32 sigmas/noise
             # (promoting them back to fp32 after each step) and the text encoder
             # runs in bf16, whose embeds would otherwise promote the concatenated
