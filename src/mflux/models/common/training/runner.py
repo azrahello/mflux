@@ -32,8 +32,9 @@ from mflux.utils.exceptions import StopTrainingException
 
 
 class TrainingRunner:
-    # Z-Image-Turbo training benefits from a training adapter (assistant LoRA).
+    # Turbo (distilled) models benefit from a training adapter (assistant LoRA).
     ZIMAGE_TURBO_TRAINING_ADAPTER = "ostris/zimage_turbo_training_adapter:zimage_turbo_training_adapter_v2.safetensors"
+    KREA2_TURBO_TRAINING_ADAPTER = "ostris/krea2_turbo_training_adapter:krea2_turbo_training_adapter_v1.safetensors"
 
     @staticmethod
     def _disable_assistant_loras(transformer) -> None:
@@ -77,6 +78,7 @@ class TrainingRunner:
             ModelConfig.krea2().model_name,
             ModelConfig.krea2_raw().model_name,
         }
+        is_krea2_turbo = model_config.model_name == ModelConfig.krea2().model_name
         if training_spec.is_edit and not is_flux2_base:
             raise ValueError("Edit training currently supports only FLUX.2-klein-base models.")
         if is_ernie:
@@ -107,10 +109,15 @@ class TrainingRunner:
             if hasattr(model, "tiling_config") and model.tiling_config is None:
                 model.tiling_config = TilingConfig()
 
-        # For Z-Image-Turbo we always apply the assistant training adapter (automatic, no config needed).
+        # For Turbo models we always apply the assistant training adapter (automatic, no config needed).
         if is_zimage_turbo:
             adapter.load_training_adapter(
                 path=TrainingRunner.ZIMAGE_TURBO_TRAINING_ADAPTER,
+                scale=1.0,
+            )
+        if is_krea2_turbo:
+            adapter.load_training_adapter(
+                path=TrainingRunner.KREA2_TURBO_TRAINING_ADAPTER,
                 scale=1.0,
             )
 
@@ -196,7 +203,7 @@ class TrainingRunner:
 
         try:
             TrainingTrainer.train(adapter=adapter, training_spec=training_spec, training_state=training_state)
-            if is_zimage_turbo:
+            if is_zimage_turbo or is_krea2_turbo:
                 TrainingRunner._disable_assistant_loras(adapter.transformer())
             return adapter, training_spec
         except StopTrainingException:

@@ -79,6 +79,9 @@ class Krea2TrainingAdapter(TrainingAdapter):
             width=width,
             tiling_config=getattr(self._krea2, "tiling_config", None),
         )
+        # Tiled VAE encode (low_ram) returns 5D (B, C, 1, H, W); the transformer expects 4D.
+        if encoded.ndim == 5 and encoded.shape[2] == 1:
+            encoded = encoded[:, :, 0, :, :]
         clean_latents = Krea2LatentCreator.pack_latents(encoded, height, width).astype(mx.float32)
 
         caption = Krea2TrainingAdapter._caption_text(prompt)
