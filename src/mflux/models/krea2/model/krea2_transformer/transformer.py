@@ -136,9 +136,21 @@ class Krea2Transformer(nn.Module):
                 f"Krea2 expects conditioning with {self.txtlayers}x{self.txtdim}="
                 f"{self.txtlayers * self.txtdim} features (a {self.txtlayers}-layer Qwen3-VL stack) but got {dim}."
             )
-        context = context.reshape(b, seq, self.txtlayers, self.txtdim)
+        # The fusion runs in fp32 regardless of the activation dtype: a rebalanced
+        # txtfusion.projector (--projector-rebalance-strength) can amplify the
+        # stream far past float16 range mid-fusion, and the fusion is off the
+        # per-step hot path so full precision here is effectively free. When the
+        # result goes back to float16, saturate at its finite max instead of
+        # overflowing to inf (the DiT blocks renormalize magnitudes via prenorm,
+        # so saturated-but-finite values keep rendering).
+        out_dtype = context.dtype
+        context = context.reshape(b, seq, self.txtlayers, self.txtdim).astype(mx.float32)
         context = self.txtfusion(context, mask=None)
-        return self.txtmlp(context)
+        context = self.txtmlp(context)
+        if out_dtype == mx.float16:
+            f16_max = float(mx.finfo(mx.float16).max)
+            context = mx.clip(context, -f16_max, f16_max)
+        return context.astype(out_dtype)
 
     def prepare_refs(self, ref_latents: list[mx.array], bs: int, dtype: mx.Dtype) -> Krea2PreparedRefs:
         # Patchify the clean reference latents once: each keeps its own y/x grid
