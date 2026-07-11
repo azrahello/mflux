@@ -87,6 +87,11 @@ class Ideogram4Initializer:
 
     @staticmethod
     def _apply_weights(model, weights: LoadedWeights, quantize: int | None) -> None:
+        text_encoder_weights = weights.components.get("text_encoder")
+        if isinstance(text_encoder_weights, dict) and "visual" in text_encoder_weights:
+            text_encoder_weights["visual"] = Ideogram4WeightDefinition.dequantize_visual_tree(
+                text_encoder_weights["visual"]
+            )
         model.bits = WeightApplier.apply_and_quantize(
             weights=weights,
             quantize_arg=quantize,
@@ -128,6 +133,9 @@ class Ideogram4Initializer:
         rope_parameters = text_config.get("rope_parameters")
         if not isinstance(rope_parameters, dict):
             rope_parameters = {}
+        vision_config = config.get("vision_config") if isinstance(config, dict) else None
+        if not isinstance(vision_config, dict):
+            vision_config = {}
         return {
             "vocab_size": int(text_config.get("vocab_size", 151936)),
             "hidden_size": int(text_config.get("hidden_size", 4096)),
@@ -139,6 +147,16 @@ class Ideogram4Initializer:
             "rope_theta": float(rope_parameters.get("rope_theta", text_config.get("rope_theta", 5_000_000.0))),
             "rms_norm_eps": float(text_config.get("rms_norm_eps", 1e-6)),
             "head_dim": int(text_config.get("head_dim", 128)),
+            "vision_patch_size": int(vision_config.get("patch_size", 16)),
+            "vision_temporal_patch_size": int(vision_config.get("temporal_patch_size", 2)),
+            "vision_hidden_size": int(vision_config.get("hidden_size", 1152)),
+            "vision_num_heads": int(vision_config.get("num_heads", 16)),
+            "vision_intermediate_size": int(vision_config.get("intermediate_size", 4304)),
+            "vision_depth": int(vision_config.get("depth", 27)),
+            "vision_spatial_merge_size": int(vision_config.get("spatial_merge_size", 2)),
+            "vision_num_position_embeddings": int(vision_config.get("num_position_embeddings", 2304)),
+            "vision_out_hidden_size": int(vision_config.get("out_hidden_size", 4096)),
+            "vision_deepstack_visual_indexes": list(vision_config.get("deepstack_visual_indexes", [8, 16, 24])),
         }
 
     @staticmethod

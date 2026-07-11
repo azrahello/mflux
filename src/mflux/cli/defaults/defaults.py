@@ -62,6 +62,32 @@ MODEL_INFERENCE_STEPS = {
 }
 QUANTIZE_CHOICES = [3, 5, 4, 6, 8]
 
+# Per-layer weights applied to the stacked multi-tap text-encoder conditioning
+# (Krea 2: 12 taps, Ideogram 4: 13 taps). All-1.0 = no effect on generation.
+# Edit these lists directly to change the default for all future generations
+# of that model without passing --conditioning-weights every time. Keyed by
+# the single canonical name each mflux-generate-<model> CLI uses internally
+# (not by every --model alias).
+CONDITIONING_WEIGHTS_DEFAULT = {
+    "krea2": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "ideogram4": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+}
+
+# Uniform gain on the whole conditioning tensor, applied after the per-layer
+# weights (and after --conditioning-renormalize). Mirrors the reference
+# rebalance node's 'multiplier' input. 1.0 = no effect.
+CONDITIONING_MULTIPLIER_DEFAULT = {
+    "krea2": 1.0,
+    "ideogram4": 1.0,
+}
+
+# Optional default guidance schedule per model, format "start-end:value;...".
+# None = use the model's normal constant/preset guidance behavior.
+GUIDANCE_SCHEDULE_DEFAULT = {
+    "krea2": None,
+    "ideogram4": None,
+}
+
 if os.environ.get("MFLUX_CACHE_DIR"):
     MFLUX_CACHE_DIR = Path(os.environ["MFLUX_CACHE_DIR"]).resolve()
 else:

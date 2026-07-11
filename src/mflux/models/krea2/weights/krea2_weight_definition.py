@@ -4,9 +4,11 @@ from typing import List
 import mlx.core as mx
 
 from mflux.models.common.config.model_config import ModelConfig
-from mflux.models.common.tokenizer import LanguageTokenizer
+from mflux.models.common.tokenizer import LanguageTokenizer, VisionLanguageTokenizer
 from mflux.models.common.weights.loading.weight_definition import ComponentDefinition, TokenizerDefinition
-from mflux.models.krea2.model.krea2_text_encoder.text_encoder import KREA2_TEMPLATE
+from mflux.models.common.weights.mapping.weight_transforms import WeightTransforms
+from mflux.models.krea2.model.krea2_text_encoder.krea2_vision_processor import Krea2VisionLanguageProcessor
+from mflux.models.krea2.model.krea2_text_encoder.text_encoder import KREA2_IMAGE_TEMPLATE, KREA2_TEMPLATE
 from mflux.models.krea2.weights.krea2_weight_mapping import Krea2WeightMapping
 
 
@@ -18,7 +20,20 @@ class Krea2WeightDefinition:
         for prefix in Krea2WeightDefinition._TE_PREFIXES:
             if key.startswith(prefix):
                 return key[len(prefix) :]
+        # Vision tower keys (visual.*) already match the text_encoder.visual
+        # submodule's attribute paths as-is, no prefix to strip.
+        if key.startswith("visual."):
+            return key
         return None
+
+    @staticmethod
+    def transform_te_weight(key: str, value):
+        # The vision tower's patch_embed conv ships in PyTorch (O, I, kD, kH, kW)
+        # layout; everything else in this checkpoint (Linear/Embedding/RMSNorm) is
+        # layout-identical between PyTorch and MLX and needs no transform.
+        if key == "visual.patch_embed.proj.weight":
+            return WeightTransforms.transpose_conv3d_weight(value)
+        return value
 
     @staticmethod
     def get_components() -> List[ComponentDefinition]:
@@ -52,6 +67,7 @@ class Krea2WeightDefinition:
                 skip_quantization=True,  # quantizing the TE degrades conditioning
                 mapping_getter=None,  # direct load; key_transform strips prefix to match module paths
                 key_transform=Krea2WeightDefinition.strip_te_prefix,
+                weight_transform=Krea2WeightDefinition.transform_te_weight,
             ),
         ]
 
@@ -103,6 +119,17 @@ class Krea2WeightDefinition:
                 max_length=1024,
                 padding="longest",
                 template=KREA2_TEMPLATE,
+                download_patterns=["tokenizer/**", "added_tokens.json", "chat_template.jinja"],
+            ),
+            TokenizerDefinition(
+                name="qwen3vl_vision",
+                hf_subdir="tokenizer",
+                tokenizer_class="AutoTokenizer",
+                encoder_class=VisionLanguageTokenizer,
+                processor_class=Krea2VisionLanguageProcessor,
+                max_length=1024,
+                template=KREA2_IMAGE_TEMPLATE,
+                image_token="<|image_pad|>",
                 download_patterns=["tokenizer/**", "added_tokens.json", "chat_template.jinja"],
             ),
         ]

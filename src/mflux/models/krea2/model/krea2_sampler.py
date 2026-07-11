@@ -1,9 +1,26 @@
+import math
+
 import mlx.core as mx
 
 
 class Krea2Sampler:
-    # Sigmas come from Krea2FlowScheduler (the shared dynamic exponential time shift);
-    # this class only provides the denoise-loop steppers.
+    # Standard t2i sigmas come from Krea2FlowScheduler (the shared dynamic exponential
+    # time shift); this class provides the denoise-loop steppers plus the fixed-shift
+    # flow_sigmas the edit-rebalance recipe's schedule timing is tuned on.
+
+    @staticmethod
+    def flow_sigmas(num_steps: int, mu: float = 1.15, start: float = 1.0) -> mx.array:
+        # Reference applies mu exponentially: t' = e^mu / (e^mu + (1/t - 1)).
+        # (ComfyUI instead uses mu as a linear shift; the edit-rebalance schedule
+        # timing stays correct either way via Krea2EditRebalance._sigma_to_percent.)
+        #
+        # start < 1.0 compresses all num_steps into the reduced noise range
+        # [sigma(start), 0] (ComfyUI-style img2img denoise) instead of truncating
+        # the step grid.
+        shift = math.exp(mu)
+        sigmas = mx.linspace(start, 0.0, num_steps + 1)
+        return shift * sigmas / (1.0 + (shift - 1.0) * sigmas)
+
     @staticmethod
     def make_stepper(name: str, sigmas: mx.array, seed: int):
         if name == "euler":
