@@ -193,12 +193,12 @@ class Krea2(nn.Module):
         # the raw embeds (per-step multiplier, crossover blend) fall back to
         # fusing in-loop inside the transformer.
         dtype = ModelConfig.precision
-        fused_scheduled = [self.transformer.fuse_context(e.astype(dtype)) for e in scheduled_embeds]
+        fused_scheduled = [self.transformer.fuse_context(e, out_dtype=dtype) for e in scheduled_embeds]
         fused_weighted = None
         if weighted_embeds is not None:
-            fused_weighted = [self.transformer.fuse_context(e.astype(dtype)) for e in weighted_embeds]
+            fused_weighted = [self.transformer.fuse_context(e, out_dtype=dtype) for e in weighted_embeds]
         if neg_embeds is not None:
-            neg_embeds = self.transformer.fuse_context(neg_embeds.astype(dtype))
+            neg_embeds = self.transformer.fuse_context(neg_embeds, out_dtype=dtype)
         mx.eval(*fused_scheduled, *(fused_weighted or []), *([neg_embeds] if neg_embeds is not None else []))
 
         stepper = Krea2Sampler.make_stepper(resolved_scheduler, sigmas, seed)
@@ -391,11 +391,14 @@ class Krea2(nn.Module):
             # (promoting them back to fp32 after each step) and the text encoder
             # runs in bf16, whose embeds would otherwise promote the concatenated
             # sequence to fp32. The numerically delicate sampler math stays fp32.
-            v = transformer(latents.astype(dtype), timestep, embeds.astype(dtype), prepared_refs=prepared_refs)
+            # Embeds are NOT pre-cast: pre-fused ones already carry the activation
+            # dtype, while raw (band-scaled) ones can exceed float16 range and must
+            # reach fuse_context's fp32 path unclipped -- it casts on the way out.
+            v = transformer(latents.astype(dtype), timestep, embeds, prepared_refs=prepared_refs)
             if neg_embeds is not None:
                 # The negative branch runs without reference tokens, matching the
                 # reference wiring (refs ride only the positive conditioning).
-                v_neg = transformer(latents.astype(dtype), timestep, neg_embeds.astype(dtype))
+                v_neg = transformer(latents.astype(dtype), timestep, neg_embeds)
                 v = v_neg + guidance_value * (v - v_neg)
             return v
 

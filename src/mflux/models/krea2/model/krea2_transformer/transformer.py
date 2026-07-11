@@ -73,7 +73,7 @@ class Krea2Transformer(nn.Module):
         H, W = x.shape[-2], x.shape[-1]
         h_, w_ = H // patch, W // patch
 
-        context = self.fuse_context(context)
+        context = self.fuse_context(context, out_dtype=x.dtype)
 
         # Patchify: (b, c, h*ph, w*pw) -> (b, h*w, c*ph*pw)
         img = x.reshape(bs, c, h_, patch, w_, patch).transpose(0, 2, 4, 1, 3, 5).reshape(bs, h_ * w_, c * patch * patch)
@@ -123,7 +123,7 @@ class Krea2Transformer(nn.Module):
         out = out.reshape(bs, self.channels, H, W)
         return out[:, :, :H_orig, :W_orig]
 
-    def fuse_context(self, context: mx.array) -> mx.array:
+    def fuse_context(self, context: mx.array, out_dtype: mx.Dtype | None = None) -> mx.array:
         # Fuse the stacked per-layer conditioning (B, seq, txtlayers*txtdim) into
         # the DiT's text stream (B, seq, features). Constant across denoise steps,
         # so callers may pre-fuse once and pass the result through unchanged
@@ -136,14 +136,17 @@ class Krea2Transformer(nn.Module):
                 f"Krea2 expects conditioning with {self.txtlayers}x{self.txtdim}="
                 f"{self.txtlayers * self.txtdim} features (a {self.txtlayers}-layer Qwen3-VL stack) but got {dim}."
             )
-        # The fusion runs in fp32 regardless of the activation dtype: a rebalanced
-        # txtfusion.projector (--projector-rebalance-strength) can amplify the
-        # stream far past float16 range mid-fusion, and the fusion is off the
-        # per-step hot path so full precision here is effectively free. When the
-        # result goes back to float16, saturate at its finite max instead of
-        # overflowing to inf (the DiT blocks renormalize magnitudes via prenorm,
-        # so saturated-but-finite values keep rendering).
-        out_dtype = context.dtype
+        # The fusion runs in fp32 regardless of the activation dtype: band-scaled
+        # embeds (--conditioning-weights) and a rebalanced txtfusion.projector
+        # (--projector-rebalance-strength) can amplify the stream far past float16
+        # range, and the fusion is off the per-step hot path so full precision here
+        # is effectively free. Callers must pass the RAW (unclipped) embeds and ask
+        # for the activation dtype via out_dtype -- pre-casting large embeds to
+        # float16 would overflow to inf before this fp32 path can help. When the
+        # result goes to float16, saturate at its finite max instead of overflowing
+        # (the DiT blocks renormalize magnitudes via prenorm, so saturated-but-finite
+        # values keep rendering).
+        out_dtype = out_dtype if out_dtype is not None else context.dtype
         context = context.reshape(b, seq, self.txtlayers, self.txtdim).astype(mx.float32)
         context = self.txtfusion(context, mask=None)
         context = self.txtmlp(context)
