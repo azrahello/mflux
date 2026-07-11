@@ -2,7 +2,7 @@ import mlx.core as mx
 from PIL import Image
 
 from mflux.models.common.tokenizer import Tokenizer, VisionLanguageTokenizer
-from mflux.models.krea2.model.krea2_text_encoder.text_encoder import Krea2TextEncoder
+from mflux.models.krea2.model.krea2_text_encoder.text_encoder import KREA2_TEMPLATE, Krea2TextEncoder
 
 
 class Krea2PromptEncoder:
@@ -68,6 +68,45 @@ class Krea2PromptEncoder:
             neg = negative_prompt if negative_prompt and negative_prompt.strip() else " "
             # Negative conditioning stays text-only: CFG should push away from a
             # generic unconditioned prompt, not away from "the reference image".
+            neg_embeds = Krea2PromptEncoder.encode_prompt(neg, tokenizer, text_encoder)
+
+        mx.eval(embeds)
+        if neg_embeds is not None:
+            mx.eval(neg_embeds)
+        return embeds, neg_embeds
+
+    @staticmethod
+    def encode_edit_prompt_pair(
+        *,
+        prompt: str,
+        negative_prompt: str | None,
+        guidance: float,
+        images: list[Image.Image],
+        tokenizer: Tokenizer,
+        vision_tokenizer: VisionLanguageTokenizer,
+        text_encoder: Krea2TextEncoder,
+    ) -> tuple[mx.array, mx.array | None]:
+        # In-context edit (ai-toolkit / Ostris): the references enter under the BASE
+        # t2i template with "Picture N:" vision markers — the layout the edit LoRAs
+        # saw in training — NOT the image-edit descriptor template used by --img-ref.
+        edit_tokenizer = VisionLanguageTokenizer(
+            tokenizer=vision_tokenizer.tokenizer,
+            processor=vision_tokenizer.processor,
+            max_length=vision_tokenizer.max_length,
+            template=KREA2_TEMPLATE,
+            image_token=vision_tokenizer.image_token,
+        )
+        tokens = edit_tokenizer.tokenize(prompt, images=images)
+        embeds = text_encoder.get_prompt_embeds(
+            tokens.input_ids,
+            tokens.attention_mask,
+            pixel_values=tokens.pixel_values,
+            image_grid_thw=tokens.image_grid_thw,
+        )
+
+        neg_embeds = None
+        if guidance != 1.0:
+            neg = negative_prompt if negative_prompt and negative_prompt.strip() else " "
             neg_embeds = Krea2PromptEncoder.encode_prompt(neg, tokenizer, text_encoder)
 
         mx.eval(embeds)

@@ -1,8 +1,10 @@
 import mlx.core as mx
+from mlx import nn
 
 import mflux.models.krea2.model.krea2_scheduler  # noqa: F401 — register er_sde/euler schedulers
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.models.common.config import ModelConfig
+from mflux.models.common.conditioning import ConditioningBands
 from mflux.models.common.lora.mapping.lora_loader import LoRALoader
 from mflux.models.common.tokenizer import TokenizerLoader
 from mflux.models.common.weights.loading.loaded_weights import LoadedWeights
@@ -24,6 +26,8 @@ class Krea2Initializer:
         model_path: str | None = None,
         lora_paths: list[str] | None = None,
         lora_scales: list[float] | None = None,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float = 0.05,
     ) -> None:
         path = model_path if model_path else model_config.model_name
         Krea2Initializer._init_config(model, model_config)
@@ -32,6 +36,7 @@ class Krea2Initializer:
         Krea2Initializer._init_models(model, model_config)
         Krea2Initializer._apply_weights(model, weights, quantize)
         Krea2Initializer._apply_lora(model, lora_paths, lora_scales)
+        Krea2Initializer._apply_projector_rebalance(model, projector_rebalance_weights, projector_rebalance_strength)
         del weights
         mx.eval(model)
         mx.clear_cache()
@@ -83,3 +88,42 @@ class Krea2Initializer:
             lora_paths=lora_paths,
             lora_scales=lora_scales,
         )
+
+    @staticmethod
+    def _apply_projector_rebalance(model, weights: str | None, strength: float) -> None:
+        # Reversible, LoRA-style diff on the learned txtfusion.projector (a
+        # Linear(txtlayers -> 1) that fuses the tapped Qwen3-VL layers into one
+        # conditioning): new_weight = weight + strength * diff. Ported from the
+        # ComfyUI AzKrea2ProjectorRebalance node -- ComfyUI's model patcher applies
+        # diffs to full-precision weights, so a quantized projector is dequantized
+        # back to a plain Linear here rather than patched in its packed form.
+        #
+        # The applied patch is recorded on the model so generated images carry
+        # it in their metadata (EXIF/JSON/XMP) and --config-from-metadata can
+        # recreate the exact state; "none" = explicitly unpatched.
+        model.projector_rebalance_weights = weights if weights else "none"
+        model.projector_rebalance_strength = strength if weights else None
+        if not weights:
+            return
+        diffs = ConditioningBands.parse_weights(weights)
+        projector = model.transformer.txtfusion.projector
+        if isinstance(projector, nn.QuantizedLinear):
+            weight = mx.dequantize(
+                projector.weight,
+                scales=projector.scales,
+                biases=projector.biases,
+                group_size=projector.group_size,
+                bits=projector.bits,
+                mode=projector.mode,
+            )
+            projector = nn.Linear(weight.shape[1], weight.shape[0], bias=False)
+            projector.weight = weight
+            model.transformer.txtfusion.projector = projector
+        if len(diffs) != projector.weight.shape[1]:
+            raise ValueError(
+                f"--projector-rebalance-weights must have {projector.weight.shape[1]} "
+                f"comma-separated numbers, got {len(diffs)}"
+            )
+        diff = mx.array(diffs, dtype=mx.float32).reshape(1, -1)
+        orig_dtype = projector.weight.dtype
+        projector.weight = (projector.weight.astype(mx.float32) + strength * diff).astype(orig_dtype)

@@ -46,6 +46,11 @@ def main():
         if args.conditioning_multiplier is not None
         else ui_defaults.CONDITIONING_MULTIPLIER_DEFAULT["ideogram4"]
     )
+    conditioning_clamp = (
+        args.conditioning_clamp
+        if args.conditioning_clamp is not None
+        else ui_defaults.CONDITIONING_CLAMP_DEFAULT["ideogram4"]
+    )
     guidance_schedule = args.guidance_schedule or ui_defaults.GUIDANCE_SCHEDULE_DEFAULT["ideogram4"]
 
     model_name = args.model or "ideogram4"
@@ -92,6 +97,7 @@ def main():
                 conditioning_weights=conditioning_weights,
                 conditioning_renormalize=args.conditioning_renormalize,
                 conditioning_multiplier=conditioning_multiplier,
+                conditioning_clamp=conditioning_clamp,
                 guidance_schedule=guidance_schedule,
             )
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)

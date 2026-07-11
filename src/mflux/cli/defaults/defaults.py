@@ -81,11 +81,37 @@ CONDITIONING_MULTIPLIER_DEFAULT = {
     "ideogram4": 1.0,
 }
 
+# Clamp applied to |conditioning value| after weights/multiplier, guarding against
+# fp16 overflow on extreme settings (see --conditioning-clamp). 0 = no clamp.
+CONDITIONING_CLAMP_DEFAULT = {
+    "krea2": 0.0,
+    "ideogram4": 0.0,
+}
+
+# Default per-layer diffs for --projector-rebalance-weights (the Krea 2
+# identity-edit recipe values, ported from the ComfyUI AzKrea2ProjectorRebalance
+# node). Scaled by --projector-rebalance-strength (default 0.05); pass
+# --projector-rebalance-weights none to disable the patch entirely.
+PROJECTOR_REBALANCE_WEIGHTS_DEFAULT = {
+    "krea2": "-24.195,-32.266,92.695,125.977,176.379,98.633,99.555,-359.75,-127.92,-190.32,-152.17,28.199",
+}
+
 # Optional default guidance schedule per model, format "start-end:value;...".
 # None = use the model's normal constant/preset guidance behavior.
 GUIDANCE_SCHEDULE_DEFAULT = {
     "krea2": None,
     "ideogram4": None,
+}
+
+# Optional default time-gating for CONDITIONING_WEIGHTS_DEFAULT (see
+# --conditioning-crossover/--conditioning-overlap). None = no gating, weights
+# apply to every step (current default behavior). krea2-only: ideogram4 has
+# no per-step conditioning plan to gate against.
+CONDITIONING_CROSSOVER_DEFAULT = {
+    "krea2": None,
+}
+CONDITIONING_OVERLAP_DEFAULT = {
+    "krea2": 0.0,
 }
 
 if os.environ.get("MFLUX_CACHE_DIR"):

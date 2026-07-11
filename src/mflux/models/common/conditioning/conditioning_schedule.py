@@ -62,3 +62,16 @@ class ConditioningSchedule:
                 return value + (next_value - value) * ((k + 0.5) / sub_steps)
             return value
         return None
+
+    @staticmethod
+    def crossover_fraction(progress: float, crossover: float, overlap: float) -> float:
+        # 1.0 = fully the "early" conditioning, 0.0 = fully the "late" one, with
+        # a linear ramp across the overlap window straddling the crossover
+        # point (mirrors the reference rebalance node's crossover/overlap gate).
+        early_end = min(1.0, crossover + overlap)
+        late_start = max(0.0, crossover - overlap)
+        if progress <= late_start:
+            return 1.0
+        if progress >= early_end or early_end <= late_start:
+            return 0.0
+        return (early_end - progress) / (early_end - late_start)

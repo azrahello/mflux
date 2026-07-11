@@ -105,6 +105,36 @@ class TestConditioningBandsScaleBands:
         scaled_rms = np.sqrt(np.mean(scaled**2, axis=(1, 2)))
         assert np.allclose(scaled_rms, original_rms * 4.0, rtol=1e-4)
 
+    @pytest.mark.fast
+    def test_clamp_zero_is_no_op(self):
+        embeds = mx.random.normal((1, 8, 4 * 16)) * 1000.0
+        weights = [1.0, 32.0, 1.0, 1.0]
+
+        unclamped = ConditioningBands.scale_bands(embeds, weights, multiplier=4.0)
+        clamped = ConditioningBands.scale_bands(embeds, weights, multiplier=4.0, clamp=0.0)
+
+        assert np.allclose(np.array(unclamped), np.array(clamped))
+
+    @pytest.mark.fast
+    def test_clamp_bounds_extreme_values(self):
+        embeds = mx.random.normal((1, 8, 4 * 16)) * 1000.0
+        weights = [1.0, 32.0, 1.0, 1.0]
+
+        scaled = np.array(ConditioningBands.scale_bands(embeds, weights, multiplier=4.0, clamp=50.0))
+
+        assert np.max(np.abs(scaled)) <= 50.0 + 1e-4
+
+    @pytest.mark.fast
+    def test_clamp_prevents_fp16_overflow(self):
+        embeds = (mx.random.normal((1, 8, 4 * 16)).astype(mx.float16) * 1000.0)
+        weights = [1.0, 32.0, 1.0, 1.0]
+
+        overflowed = ConditioningBands.scale_bands(embeds, weights, multiplier=4.0)
+        guarded = ConditioningBands.scale_bands(embeds, weights, multiplier=4.0, clamp=50.0)
+
+        assert bool(mx.any(mx.isinf(overflowed.astype(mx.float32))).item())
+        assert not bool(mx.any(mx.isinf(guarded.astype(mx.float32))).item())
+
 
 class TestConditioningBandsParseWeights:
     @pytest.mark.fast

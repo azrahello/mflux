@@ -113,6 +113,25 @@ class MetadataBuilder:
             xmp_packet += f"\n    <mflux:generationTimeSeconds>{metadata['generation_time_seconds']}</mflux:generationTimeSeconds>"
         elif "generation_time" in metadata:
             xmp_packet += f"\n    <mflux:generationTime>{metadata['generation_time']}</mflux:generationTime>"
+        if metadata.get("conditioning_weights"):
+            weights_str = ",".join(str(w) for w in metadata["conditioning_weights"])
+            xmp_packet += f"\n    <mflux:conditioningWeights>{weights_str}</mflux:conditioningWeights>"
+        if metadata.get("conditioning_renormalize"):
+            xmp_packet += f"\n    <mflux:conditioningRenormalize>{metadata['conditioning_renormalize']}</mflux:conditioningRenormalize>"
+        if metadata.get("conditioning_multiplier") is not None:
+            xmp_packet += f"\n    <mflux:conditioningMultiplier>{metadata['conditioning_multiplier']}</mflux:conditioningMultiplier>"
+        if metadata.get("conditioning_clamp"):
+            xmp_packet += f"\n    <mflux:conditioningClamp>{metadata['conditioning_clamp']}</mflux:conditioningClamp>"
+        if metadata.get("conditioning_crossover") is not None:
+            xmp_packet += f"\n    <mflux:conditioningCrossover>{metadata['conditioning_crossover']}</mflux:conditioningCrossover>"
+        if metadata.get("conditioning_overlap") is not None:
+            xmp_packet += f"\n    <mflux:conditioningOverlap>{metadata['conditioning_overlap']}</mflux:conditioningOverlap>"
+        if metadata.get("guidance_schedule"):
+            xmp_packet += f"\n    <mflux:guidanceSchedule>{metadata['guidance_schedule']}</mflux:guidanceSchedule>"
+        if metadata.get("projector_rebalance_weights") and metadata["projector_rebalance_weights"] != "none":
+            xmp_packet += f"\n    <mflux:projectorRebalanceWeights>{metadata['projector_rebalance_weights']}</mflux:projectorRebalanceWeights>"
+            if metadata.get("projector_rebalance_strength") is not None:
+                xmp_packet += f"\n    <mflux:projectorRebalanceStrength>{metadata['projector_rebalance_strength']}</mflux:projectorRebalanceStrength>"
 
         xmp_packet += """
 </rdf:Description>

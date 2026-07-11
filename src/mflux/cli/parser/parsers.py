@@ -6,10 +6,19 @@ import time
 import typing as t
 from pathlib import Path
 
+import mlx.core as mx
+
 from mflux.cli.defaults import defaults as ui_defaults
+from mflux.models.common.config import ModelConfig
 from mflux.models.common.resolution.lora_resolution import LoraResolution
 from mflux.models.flux.variants.in_context.utils.in_context_loras import LORA_NAME_MAP
 from mflux.utils import box_values, scale_factor
+
+_DTYPE_CHOICES = {
+    "bfloat16": mx.bfloat16, "bf16": mx.bfloat16,
+    "float16": mx.float16, "fp16": mx.float16,
+    "float32": mx.float32, "fp32": mx.float32,
+}
 
 
 class ModelSpecAction(argparse.Action):
@@ -65,6 +74,7 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--battery-percentage-stop-limit", "-B", type=lambda v: max(min(int(v), 99), 1), default=ui_defaults.BATTERY_PERCENTAGE_STOP_LIMIT, help=f"On Macs powered by battery, stop image generation when battery reaches this percentage. Default: {ui_defaults.BATTERY_PERCENTAGE_STOP_LIMIT}")
         self.add_argument("--low-ram", action="store_true", help="Enable low-RAM mode to reduce memory usage (may impact performance).")
         self.add_argument("--mlx-cache-limit-gb", type=positive_float, default=None, help="Limit MLX cache size in GB without enabling full low-RAM mode (e.g. 8 or 16).")
+        self.add_argument("--dtype", choices=sorted(_DTYPE_CHOICES), default="fp16", help="Compute/activation precision for this run (default: fp16). float16 has a much smaller numeric range than bfloat16/float32 -- more prone to overflow/black images with extreme conditioning settings; pass --dtype bfloat16 to fall back to the safer precision. Printed at the start of generation so it's never silently active.")
 
     def add_seedvr2_upscale_arguments(self) -> None:
         self.supports_image_generation = True
@@ -103,13 +113,25 @@ class CommandLineParser(argparse.ArgumentParser):
         conditioning_group.add_argument("--conditioning-weights", type=str, default=None, help="Comma-separated per-layer weights for the stacked text-encoder conditioning (e.g. '1.0,1.0,...,1.0'). Length must match the model's number of tapped layers. Default: model's neutral weights (no effect).")
         conditioning_group.add_argument("--conditioning-renormalize", action="store_true", help="After applying --conditioning-weights, rescale the conditioning tensor back to its original RMS magnitude. Prevents uneven per-layer weights from inflating or collapsing overall conditioning strength (which can hurt prompt adherence / oversaturate colors). No effect with neutral (all-1.0) weights.")
         conditioning_group.add_argument("--conditioning-multiplier", type=float, default=None, help="Uniform gain multiplied into the whole conditioning tensor, applied after --conditioning-weights and --conditioning-renormalize (equivalent to the reference rebalance node's 'multiplier' input). Default: model's default (1.0 = no effect).")
+        conditioning_group.add_argument("--conditioning-clamp", type=float, default=None, help="Clamp |conditioning value| to this after --conditioning-weights/--conditioning-multiplier. Guards against overflow (extreme weights can push values past the active dtype's range, which silently becomes inf and renders as a black image) -- most relevant with --img-ref. Try 30-60. Default: model's default (0 = no clamp).")
         conditioning_group.add_argument("--guidance-schedule", type=str, default=None, help="Piecewise guidance schedule over the denoise steps, format 'start-end:value;...' with start/end in [0,1] (e.g. '0.0-0.5:1.0;0.5-1.0:0.8'). Overrides --guidance with a per-step value.")
+
+    def add_conditioning_crossover_arguments(self) -> None:
+        crossover_group = self.add_argument_group("Conditioning time-gating")
+        crossover_group.add_argument("--conditioning-crossover", type=float, default=None, help="Time-gate --conditioning-weights instead of applying them to every step: normalized denoise progress in [0,1] (0=first step, 1=last) at which the weighted conditioning hands off to the plain (unweighted) one. Combine with --conditioning-overlap for a gradual blend instead of a hard cutover. Default: not set (weights apply to every step).")
+        crossover_group.add_argument("--conditioning-overlap", type=float, default=0.0, help="Half-width of the blend window straddling --conditioning-crossover, e.g. crossover 0.4 overlap 0.1 blends linearly from fully weighted at progress 0.3 to fully plain at progress 0.5. 0 (default) = hard cutover at --conditioning-crossover. Ignored when --conditioning-crossover is not set.")
+
+    def add_projector_rebalance_arguments(self) -> None:
+        projector_group = self.add_argument_group("Text-fusion projector rebalance")
+        projector_group.add_argument("--projector-rebalance-weights", type=str, default=None, help="Comma-separated per-layer diffs added to the model's learned txtfusion.projector weight (a Linear[layers->1] that fuses the tapped text-encoder layers into one conditioning) -- a reversible, LoRA-style model patch, not a per-generation conditioning scale. Length must match the model's number of tapped layers. Pass 'none' to disable the patch. Default: the model's preset diffs if it defines any (Krea 2: the identity-edit recipe values), otherwise no patch.")
+        projector_group.add_argument("--projector-rebalance-strength", type=float, default=0.05, help="Scales --projector-rebalance-weights before adding it to the projector weight. The diffs are typically large, so keep this small (default 0.05); raise until output destabilizes. Ignored when --projector-rebalance-weights is not set.")
 
     def add_img_ref_arguments(self) -> None:
         img_ref_group = self.add_argument_group("Reference image configuration")
         img_ref_group.add_argument("--img-ref", type=str, nargs="+", default=None, metavar="PATH", help="One or more reference images conditioning generation via the text encoder's vision tower, Redux-style: the starting latent stays pure noise (distinct from --image, which noises an image into the starting latent). Also switches the prompt's system template to the image-edit one, so the same text encodes differently with and without --img-ref.")
         img_ref_group.add_argument("--img-ref-detail", type=str, nargs="+", default=None, choices=["low", "normal", "high", "max"], metavar="TIER", help="Per-image detail tier for --img-ref, aligned by position (default 'normal' for any image without one).")
         img_ref_group.add_argument("--img-ref-rebalance", action="store_true", help="Apply the edit-rebalance conditioning recipe to --img-ref generations: subject-band refocus plus dissimilarity guidance against the reference images, with a time-scheduled hand-off from plain text conditioning. Ignored when --img-ref is not set.")
+        img_ref_group.add_argument("--edit-ref", type=str, nargs="+", default=None, metavar="PATH", help="Up to 3 reference images for in-context edit LoRAs (ai-toolkit style): each image is VAE-encoded and appended to the DiT sequence as clean tokens modulated at t=0, and also fed to the text encoder's vision tower under the base template with 'Picture N:' markers. The starting latent stays pure noise. Requires an edit-trained LoRA (--lora) to have any effect; mutually exclusive with --img-ref.")
 
     def _add_image_generator_common_arguments(self, supports_dimension_scale_factor=False) -> None:
         self.supports_image_generation = True
@@ -299,6 +321,10 @@ class CommandLineParser(argparse.ArgumentParser):
     def parse_args(self) -> argparse.Namespace:  # type: ignore
         namespace = super().parse_args()
 
+        if getattr(namespace, "dtype", None):
+            ModelConfig.precision = _DTYPE_CHOICES[namespace.dtype]
+            print(f"[mflux] precision: {namespace.dtype}")
+
         # Fold the atomic --lora / --image flags into the legacy lora_paths/lora_scales
         # and image_path/image_strength fields so all downstream logic (metadata merge,
         # path resolution, model init) stays unchanged. Runs before the metadata block.
@@ -382,6 +408,16 @@ class CommandLineParser(argparse.ArgumentParser):
             if self.supports_image_outpaint:
                 if namespace.image_outpaint_padding is None:
                     namespace.image_outpaint_padding = prior_gen_metadata.get("image_outpaint_padding", None)
+
+            # Projector rebalance: restore the recorded model patch so the run is
+            # reproducible even if the built-in default preset changes ("none" is
+            # a valid recorded value meaning explicitly unpatched).
+            if getattr(namespace, "projector_rebalance_weights", "unsupported") is None:
+                namespace.projector_rebalance_weights = prior_gen_metadata.get("projector_rebalance_weights", None)
+            if hasattr(namespace, "projector_rebalance_strength") and namespace.projector_rebalance_strength == self.get_default("projector_rebalance_strength"):
+                strength_from_metadata = prior_gen_metadata.get("projector_rebalance_strength", None)
+                if strength_from_metadata is not None:
+                    namespace.projector_rebalance_strength = strength_from_metadata
 
         # Only require model if we're not in training mode and require_model_arg is True
         if hasattr(namespace, "model") and namespace.model is None and not has_training_args and self.require_model_arg:

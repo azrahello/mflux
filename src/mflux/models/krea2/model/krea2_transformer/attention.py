@@ -32,11 +32,7 @@ class Krea2Attention(nn.Module):
         if freqs is not None:
             q, k = Krea2RopeEmbedder.apply_rope(q, k, freqs)
 
-        if self.kvheads != self.heads:
-            rep = self.heads // self.kvheads
-            k = mx.repeat(k, rep, axis=1)
-            v = mx.repeat(v, rep, axis=1)
-
+        # GQA: mx.fast SDPA broadcasts kvheads < heads natively; no k/v repeat.
         out = scaled_dot_product_attention(q.astype(v.dtype), k.astype(v.dtype), v, scale=self.scale, mask=mask)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.wo(out * mx.sigmoid(gate))

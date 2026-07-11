@@ -57,6 +57,7 @@ class Ideogram4(nn.Module):
         conditioning_weights: list[float] | None = None,
         conditioning_renormalize: bool = False,
         conditioning_multiplier: float = 1.0,
+        conditioning_clamp: float = 0.0,
         guidance_schedule: str | None = None,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
@@ -103,7 +104,7 @@ class Ideogram4(nn.Module):
         )
         if conditioning_weights is not None:
             llm_features = ConditioningBands.scale_bands(
-                llm_features, conditioning_weights, conditioning_renormalize, conditioning_multiplier
+                llm_features, conditioning_weights, conditioning_renormalize, conditioning_multiplier, conditioning_clamp
             )
         elif conditioning_multiplier != 1.0:
             llm_features = llm_features * conditioning_multiplier
@@ -165,6 +166,11 @@ class Ideogram4(nn.Module):
             lora_paths=self.lora_paths,
             lora_scales=self.lora_scales,
             generation_time=time_steps.format_dict["elapsed"],
+            conditioning_weights=conditioning_weights,
+            conditioning_renormalize=conditioning_renormalize,
+            conditioning_multiplier=conditioning_multiplier,
+            conditioning_clamp=conditioning_clamp,
+            guidance_schedule=guidance_schedule,
         )
 
     def save_model(self, base_path: str) -> None:

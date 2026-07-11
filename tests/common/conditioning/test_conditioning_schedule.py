@@ -51,3 +51,30 @@ class TestConditioningSchedulePerStepPlan:
 
         multipliers = [multiplier for _, multiplier in plan]
         assert multipliers == [1.0, 1.0, 0.8, 0.8, 0.8, 0.8, 1.4, 20.5]
+
+
+class TestConditioningScheduleCrossoverFraction:
+    @pytest.mark.fast
+    def test_before_late_start_is_fully_early(self):
+        assert ConditioningSchedule.crossover_fraction(0.1, crossover=0.4, overlap=0.1) == 1.0
+
+    @pytest.mark.fast
+    def test_after_early_end_is_fully_late(self):
+        assert ConditioningSchedule.crossover_fraction(0.6, crossover=0.4, overlap=0.1) == 0.0
+
+    @pytest.mark.fast
+    def test_midpoint_of_overlap_window_is_half(self):
+        # crossover 0.4, overlap 0.1 -> window [0.3, 0.5], midpoint 0.4 -> 0.5
+        assert ConditioningSchedule.crossover_fraction(0.4, crossover=0.4, overlap=0.1) == pytest.approx(0.5)
+
+    @pytest.mark.fast
+    def test_zero_overlap_is_a_hard_cutover(self):
+        assert ConditioningSchedule.crossover_fraction(0.39, crossover=0.4, overlap=0.0) == 1.0
+        assert ConditioningSchedule.crossover_fraction(0.4, crossover=0.4, overlap=0.0) == 1.0
+        assert ConditioningSchedule.crossover_fraction(0.41, crossover=0.4, overlap=0.0) == 0.0
+
+    @pytest.mark.fast
+    def test_clamps_crossover_plus_overlap_beyond_bounds(self):
+        # crossover 0.95, overlap 0.2 -> early_end clamped to 1.0, late_start to 0.75
+        assert ConditioningSchedule.crossover_fraction(1.0, crossover=0.95, overlap=0.2) == 0.0
+        assert ConditioningSchedule.crossover_fraction(0.7, crossover=0.95, overlap=0.2) == 1.0

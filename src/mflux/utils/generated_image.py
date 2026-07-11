@@ -41,6 +41,15 @@ class GeneratedImage:
         concept_heatmap: ConceptHeatmap | None = None,
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
+        conditioning_weights: list[float] | None = None,
+        conditioning_renormalize: bool = False,
+        conditioning_multiplier: float | None = None,
+        conditioning_clamp: float | None = None,
+        conditioning_crossover: float | None = None,
+        conditioning_overlap: float | None = None,
+        guidance_schedule: str | None = None,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float | None = None,
     ):
         self.image = image
         self.model_config = model_config
@@ -67,6 +76,15 @@ class GeneratedImage:
         self.concept_heatmap = concept_heatmap
         self.negative_prompt = negative_prompt
         self.init_metadata = init_metadata
+        self.conditioning_weights = conditioning_weights
+        self.conditioning_renormalize = conditioning_renormalize
+        self.conditioning_multiplier = conditioning_multiplier
+        self.conditioning_clamp = conditioning_clamp
+        self.conditioning_crossover = conditioning_crossover
+        self.conditioning_overlap = conditioning_overlap
+        self.guidance_schedule = guidance_schedule
+        self.projector_rebalance_weights = projector_rebalance_weights
+        self.projector_rebalance_strength = projector_rebalance_strength
 
     def get_right_half(self) -> "GeneratedImage":
         # Calculate the coordinates for the right half
@@ -96,6 +114,15 @@ class GeneratedImage:
             depth_image_path=self.depth_image_path,
             concept_heatmap=self.concept_heatmap,
             init_metadata=self.init_metadata,
+            conditioning_weights=self.conditioning_weights,
+            conditioning_renormalize=self.conditioning_renormalize,
+            conditioning_multiplier=self.conditioning_multiplier,
+            conditioning_clamp=self.conditioning_clamp,
+            conditioning_crossover=self.conditioning_crossover,
+            conditioning_overlap=self.conditioning_overlap,
+            guidance_schedule=self.guidance_schedule,
+            projector_rebalance_weights=self.projector_rebalance_weights,
+            projector_rebalance_strength=self.projector_rebalance_strength,
         )
 
     def save(
@@ -234,6 +261,21 @@ class GeneratedImage:
             "redux_image_strengths": self._format_redux_strengths(),
             "prompt": self.prompt,
             "negative_prompt": self.negative_prompt if self.negative_prompt else None,
+            "conditioning_weights": self.conditioning_weights,
+            "conditioning_renormalize": self.conditioning_renormalize if self.conditioning_weights else None,
+            "conditioning_multiplier": self.conditioning_multiplier,
+            "conditioning_clamp": self.conditioning_clamp,
+            "conditioning_crossover": self.conditioning_crossover,
+            "conditioning_overlap": self.conditioning_overlap if self.conditioning_crossover is not None else None,
+            "guidance_schedule": self.guidance_schedule,
+            # "none" = model explicitly unpatched (distinguishes a Krea 2 vanilla
+            # run from models where the patch does not apply, recorded as null).
+            "projector_rebalance_weights": self.projector_rebalance_weights,
+            "projector_rebalance_strength": (
+                self.projector_rebalance_strength
+                if self.projector_rebalance_weights and self.projector_rebalance_weights != "none"
+                else None
+            ),
         }
 
         # If we have initial metadata from a source image, merge it

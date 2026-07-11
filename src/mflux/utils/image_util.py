@@ -55,6 +55,15 @@ class ImageUtil:
         concept_heatmap: ConceptHeatmap | None = None,
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
+        conditioning_weights: list[float] | None = None,
+        conditioning_renormalize: bool = False,
+        conditioning_multiplier: float | None = None,
+        conditioning_clamp: float | None = None,
+        conditioning_crossover: float | None = None,
+        conditioning_overlap: float | None = None,
+        guidance_schedule: str | None = None,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float | None = None,
     ) -> GeneratedImage:
         normalized = ImageUtil._denormalize(decoded_latents)
         normalized_numpy = ImageUtil._to_numpy(normalized)
@@ -85,6 +94,15 @@ class ImageUtil:
             concept_heatmap=concept_heatmap,
             negative_prompt=negative_prompt,
             init_metadata=init_metadata,
+            conditioning_weights=conditioning_weights,
+            conditioning_renormalize=conditioning_renormalize,
+            conditioning_multiplier=conditioning_multiplier,
+            conditioning_clamp=conditioning_clamp,
+            conditioning_crossover=conditioning_crossover,
+            conditioning_overlap=conditioning_overlap,
+            guidance_schedule=guidance_schedule,
+            projector_rebalance_weights=projector_rebalance_weights,
+            projector_rebalance_strength=projector_rebalance_strength,
         )
 
     @staticmethod
