@@ -50,6 +50,10 @@ class GeneratedImage:
         guidance_schedule: str | None = None,
         projector_rebalance_weights: str | None = None,
         projector_rebalance_strength: float | None = None,
+        img_ref_paths: list[str] | list[Path] | None = None,
+        img_ref_details: list[str] | None = None,
+        img_ref_rebalance: bool = False,
+        edit_ref_paths: list[str] | list[Path] | None = None,
     ):
         self.image = image
         self.model_config = model_config
@@ -85,6 +89,10 @@ class GeneratedImage:
         self.guidance_schedule = guidance_schedule
         self.projector_rebalance_weights = projector_rebalance_weights
         self.projector_rebalance_strength = projector_rebalance_strength
+        self.img_ref_paths = img_ref_paths
+        self.img_ref_details = img_ref_details
+        self.img_ref_rebalance = img_ref_rebalance
+        self.edit_ref_paths = edit_ref_paths
 
     def get_right_half(self) -> "GeneratedImage":
         # Calculate the coordinates for the right half
@@ -123,6 +131,10 @@ class GeneratedImage:
             guidance_schedule=self.guidance_schedule,
             projector_rebalance_weights=self.projector_rebalance_weights,
             projector_rebalance_strength=self.projector_rebalance_strength,
+            img_ref_paths=self.img_ref_paths,
+            img_ref_details=self.img_ref_details,
+            img_ref_rebalance=self.img_ref_rebalance,
+            edit_ref_paths=self.edit_ref_paths,
         )
 
     def save(
@@ -276,6 +288,10 @@ class GeneratedImage:
                 if self.projector_rebalance_weights and self.projector_rebalance_weights != "none"
                 else None
             ),
+            "img_ref_paths": [str(p) for p in self.img_ref_paths] if self.img_ref_paths else None,
+            "img_ref_details": self.img_ref_details if self.img_ref_paths else None,
+            "img_ref_rebalance": self.img_ref_rebalance if self.img_ref_paths else None,
+            "edit_ref_paths": [str(p) for p in self.edit_ref_paths] if self.edit_ref_paths else None,
         }
 
         # If we have initial metadata from a source image, merge it

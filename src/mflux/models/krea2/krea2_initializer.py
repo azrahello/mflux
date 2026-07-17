@@ -35,9 +35,14 @@ class Krea2Initializer:
         Krea2Initializer._init_tokenizers(model, path)
         Krea2Initializer._init_models(model, model_config)
         Krea2Initializer._apply_weights(model, weights, quantize)
+        # Materialize the model and drop the raw file weights before LoRA:
+        # baking evaluates the patched layers, and with `weights` still alive
+        # every raw tensor it touches stays pinned alongside the merged copy
+        # (~+17 GB peak on the dense model).
+        del weights
+        mx.eval(model)
         Krea2Initializer._apply_lora(model, lora_paths, lora_scales)
         Krea2Initializer._apply_projector_rebalance(model, projector_rebalance_weights, projector_rebalance_strength)
-        del weights
         mx.eval(model)
         mx.clear_cache()
 

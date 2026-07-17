@@ -267,6 +267,10 @@ class Krea2(nn.Module):
             projector_rebalance_strength=self.projector_rebalance_strength,
             image_path=config.image_path,
             image_strength=image_strength,
+            img_ref_paths=img_ref_paths,
+            img_ref_details=img_ref_details,
+            img_ref_rebalance=img_ref_rebalance,
+            edit_ref_paths=edit_ref_paths,
         )
 
     def save_model(self, base_path: str) -> None:

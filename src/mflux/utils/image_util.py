@@ -64,6 +64,10 @@ class ImageUtil:
         guidance_schedule: str | None = None,
         projector_rebalance_weights: str | None = None,
         projector_rebalance_strength: float | None = None,
+        img_ref_paths: list[str] | list[Path] | None = None,
+        img_ref_details: list[str] | None = None,
+        img_ref_rebalance: bool = False,
+        edit_ref_paths: list[str] | list[Path] | None = None,
     ) -> GeneratedImage:
         normalized = ImageUtil._denormalize(decoded_latents)
         normalized_numpy = ImageUtil._to_numpy(normalized)
@@ -103,6 +107,10 @@ class ImageUtil:
             guidance_schedule=guidance_schedule,
             projector_rebalance_weights=projector_rebalance_weights,
             projector_rebalance_strength=projector_rebalance_strength,
+            img_ref_paths=img_ref_paths,
+            img_ref_details=img_ref_details,
+            img_ref_rebalance=img_ref_rebalance,
+            edit_ref_paths=edit_ref_paths,
         )
 
     @staticmethod

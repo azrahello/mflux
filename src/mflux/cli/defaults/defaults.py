@@ -88,10 +88,10 @@ CONDITIONING_CLAMP_DEFAULT = {
     "ideogram4": 0.0,
 }
 
-# Default per-layer diffs for --projector-rebalance-weights (the Krea 2
+# Preset per-layer diffs for --projector-rebalance-weights (the Krea 2
 # identity-edit recipe values, ported from the ComfyUI AzKrea2ProjectorRebalance
-# node). Scaled by --projector-rebalance-strength (default 0.05); pass
-# --projector-rebalance-weights none to disable the patch entirely.
+# node). Opt-in: only applied when --projector-rebalance-strength is passed
+# without an explicit --projector-rebalance-weights.
 PROJECTOR_REBALANCE_WEIGHTS_DEFAULT = {
     "krea2": "-24.195,-32.266,92.695,125.977,176.379,98.633,99.555,-359.75,-127.92,-190.32,-152.17,28.199",
 }

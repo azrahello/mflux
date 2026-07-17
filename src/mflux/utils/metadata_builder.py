@@ -11,6 +11,10 @@ class MetadataBuilder:
     _IPTC_PROMPT_MAX_BYTES = 2000  # IPTC Caption/Abstract (2:120) is commonly limited to 2000 bytes
 
     @staticmethod
+    def _escape_xml(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    @staticmethod
     def _looks_like_json(text: str) -> bool:
         stripped = (text or "").lstrip()
         if not stripped or stripped[0] not in ("{", "["):
@@ -113,6 +117,23 @@ class MetadataBuilder:
             xmp_packet += f"\n    <mflux:generationTimeSeconds>{metadata['generation_time_seconds']}</mflux:generationTimeSeconds>"
         elif "generation_time" in metadata:
             xmp_packet += f"\n    <mflux:generationTime>{metadata['generation_time']}</mflux:generationTime>"
+        if metadata.get("image_path"):
+            path_escaped = MetadataBuilder._escape_xml(str(metadata["image_path"]))
+            xmp_packet += f"\n    <mflux:imagePath>{path_escaped}</mflux:imagePath>"
+        if metadata.get("image_paths"):
+            paths_escaped = MetadataBuilder._escape_xml(",".join(str(p) for p in metadata["image_paths"]))
+            xmp_packet += f"\n    <mflux:imagePaths>{paths_escaped}</mflux:imagePaths>"
+        if metadata.get("img_ref_paths"):
+            paths_escaped = MetadataBuilder._escape_xml(",".join(str(p) for p in metadata["img_ref_paths"]))
+            xmp_packet += f"\n    <mflux:imgRefPaths>{paths_escaped}</mflux:imgRefPaths>"
+            if metadata.get("img_ref_details"):
+                details_str = ",".join(metadata["img_ref_details"])
+                xmp_packet += f"\n    <mflux:imgRefDetails>{details_str}</mflux:imgRefDetails>"
+            if metadata.get("img_ref_rebalance"):
+                xmp_packet += f"\n    <mflux:imgRefRebalance>{metadata['img_ref_rebalance']}</mflux:imgRefRebalance>"
+        if metadata.get("edit_ref_paths"):
+            paths_escaped = MetadataBuilder._escape_xml(",".join(str(p) for p in metadata["edit_ref_paths"]))
+            xmp_packet += f"\n    <mflux:editRefPaths>{paths_escaped}</mflux:editRefPaths>"
         if metadata.get("conditioning_weights"):
             weights_str = ",".join(str(w) for w in metadata["conditioning_weights"])
             xmp_packet += f"\n    <mflux:conditioningWeights>{weights_str}</mflux:conditioningWeights>"

@@ -73,13 +73,19 @@ def main():
         if args.conditioning_overlap is not None
         else ui_defaults.CONDITIONING_OVERLAP_DEFAULT["krea2"]
     )
-    projector_rebalance_weights = (
-        args.projector_rebalance_weights
-        if args.projector_rebalance_weights is not None
-        else ui_defaults.PROJECTOR_REBALANCE_WEIGHTS_DEFAULT["krea2"]
-    )
-    if projector_rebalance_weights.strip().lower() in ("", "none", "off"):
+    # The projector patch is opt-in: --projector-rebalance-weights selects the
+    # diffs, or --projector-rebalance-strength alone activates the preset ones
+    # (strength 0 keeps the patch off, matching the pre-opt-in disable idiom).
+    projector_rebalance_weights = args.projector_rebalance_weights
+    if projector_rebalance_weights is None and args.projector_rebalance_strength:
+        projector_rebalance_weights = ui_defaults.PROJECTOR_REBALANCE_WEIGHTS_DEFAULT["krea2"]
+    if projector_rebalance_weights is not None and projector_rebalance_weights.strip().lower() in ("", "none", "off"):
         projector_rebalance_weights = None
+    if args.projector_rebalance_strength == 0:
+        projector_rebalance_weights = None
+    projector_rebalance_strength = (
+        args.projector_rebalance_strength if args.projector_rebalance_strength is not None else 0.05
+    )
 
     # 1. Load the model
     model = Krea2(
@@ -89,7 +95,7 @@ def main():
         lora_paths=args.lora_paths,
         lora_scales=args.lora_scales,
         projector_rebalance_weights=projector_rebalance_weights,
-        projector_rebalance_strength=args.projector_rebalance_strength,
+        projector_rebalance_strength=projector_rebalance_strength,
     )
 
     # 2. Register callbacks (stepwise image output, memory stats, battery saver)
