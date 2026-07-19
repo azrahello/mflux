@@ -142,6 +142,7 @@ class Krea2TrainingAdapter(TrainingAdapter):
             lora_paths=[str(path)],
             lora_scales=[1.0],
             role="train",
+            bake_lora=False,
         )
 
     def load_training_adapter(self, *, path: str | Path, scale: float = 1.0) -> None:
@@ -151,6 +152,7 @@ class Krea2TrainingAdapter(TrainingAdapter):
             lora_paths=[str(path)],
             lora_scales=[float(scale)],
             role="assistant",
+            bake_lora=False,
         )
 
     def _assistant_disabled(self):

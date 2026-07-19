@@ -70,6 +70,9 @@ class Krea2LoRAMapping(LoRAMapping):
             possible_up_patterns=Krea2LoRAMapping._matrix_patterns(module_paths, flat_paths, "up"),
             possible_down_patterns=Krea2LoRAMapping._matrix_patterns(module_paths, flat_paths, "down"),
             possible_alpha_patterns=Krea2LoRAMapping._alpha_patterns(module_paths, flat_paths),
+            possible_lokr_w1_patterns=Krea2LoRAMapping._lokr_patterns(module_paths, flat_paths, "lokr_w1"),
+            possible_lokr_w2_patterns=Krea2LoRAMapping._lokr_patterns(module_paths, flat_paths, "lokr_w2"),
+            possible_diff_patterns=Krea2LoRAMapping._diff_patterns(module_paths, flat_paths),
         )
 
     @staticmethod
@@ -117,6 +120,30 @@ class Krea2LoRAMapping(LoRAMapping):
                 f"{prefix}{path}.alpha" for prefix in ("", "transformer.", "diffusion_model.", "base_model.model.")
             )
         patterns.extend(f"lora_unet_{path}.alpha" for path in flat_paths)
+        return patterns
+
+    @staticmethod
+    def _diff_patterns(module_paths: list[str], flat_paths: list[str]) -> list[str]:
+        # "Full" LyCORIS/kohya patches store a raw weight delta as
+        # `<module>.diff` instead of a rank-factored lora_A/lora_B pair.
+        patterns = []
+        for path in module_paths:
+            patterns.extend(
+                f"{prefix}{path}.diff" for prefix in ("", "transformer.", "diffusion_model.", "base_model.model.")
+            )
+        patterns.extend(f"lora_unet_{path}.diff" for path in flat_paths)
+        return patterns
+
+    @staticmethod
+    def _lokr_patterns(module_paths: list[str], flat_paths: list[str], factor: str) -> list[str]:
+        # Base .lokr_w1/.lokr_w2 patterns; the loader derives the low-rank
+        # factor variants (lokr_w1_a/b, lokr_t2, ...) from these suffixes.
+        patterns = []
+        for path in module_paths:
+            patterns.extend(
+                f"{prefix}{path}.{factor}" for prefix in ("", "transformer.", "diffusion_model.", "base_model.model.")
+            )
+        patterns.extend(f"lora_unet_{path}.{factor}" for path in flat_paths)
         return patterns
 
     @staticmethod

@@ -111,6 +111,7 @@ class TestKrea2LoRAMapping:
             transformer=transformer,
             lora_paths=[str(lora_path)],
             lora_scales=[0.7],
+            bake_lora=False,
         )
 
         target = transformer.blocks[0].attn.wq
@@ -135,6 +136,7 @@ class TestKrea2LoRAMapping:
             transformer=transformer,
             lora_paths=[str(lora_path)],
             lora_scales=[1.0],
+            bake_lora=False,
         )
 
         assert isinstance(transformer.blocks[0].mlp.down, LoRALinear)
@@ -155,10 +157,43 @@ class TestKrea2LoRAMapping:
             transformer=transformer,
             lora_paths=[str(lora_path)],
             lora_scales=[0.5],
+            bake_lora=False,
         )
 
         assert isinstance(transformer.txtfusion.projector, LoRALinear)
         assert transformer.txtfusion.projector.scale == pytest.approx(0.5)
+
+    def test_applies_full_diff_patch_to_transformer(self, tmp_path):
+        # Reproduces "refiner_neuter_patch"-style LoRAs: a raw weight delta
+        # stored as `<module>.diff` instead of a rank-factored lora_A/lora_B pair.
+        transformer = _tiny_transformer()
+        lora_path = tmp_path / "diff_patch.safetensors"
+        wo_diff = mx.ones((16, 16))
+        down_diff = mx.ones((16, 128))
+        mx.save_safetensors(
+            str(lora_path),
+            {
+                "diffusion_model.txtfusion.refiner_blocks.0.attn.wo.diff": wo_diff,
+                "diffusion_model.txtfusion.refiner_blocks.0.mlp.down.diff": down_diff,
+            },
+        )
+
+        wo_before = transformer.txtfusion.refiner_blocks[0].attn.wo.weight
+        down_before = transformer.txtfusion.refiner_blocks[0].mlp.down.weight
+
+        lora_paths, _ = LoRALoader.load_and_apply_lora(
+            lora_mapping=Krea2LoRAMapping.get_mapping(),
+            transformer=transformer,
+            lora_paths=[str(lora_path)],
+            lora_scales=[0.8],
+            bake_lora=True,
+        )
+
+        assert lora_paths == [str(lora_path)]
+        wo_after = transformer.txtfusion.refiner_blocks[0].attn.wo.weight
+        down_after = transformer.txtfusion.refiner_blocks[0].mlp.down.weight
+        assert mx.allclose(wo_after, wo_before + 0.8 * wo_diff, atol=1e-5).item()
+        assert mx.allclose(down_after, down_before + 0.8 * down_diff, atol=1e-5).item()
 
     def _matched_keys(self, keys: list[str]) -> set[str]:
         matched_keys: set[str] = set()

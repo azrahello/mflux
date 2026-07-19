@@ -121,14 +121,20 @@ class LoRASaver:
                 dense_linear.weight = merged
                 if has_bias:
                     dense_linear.bias = base_linear.bias
-                return nn.QuantizedLinear.from_linear(
+                quantized = nn.QuantizedLinear.from_linear(
                     dense_linear,
                     group_size=base_linear.group_size,
                     bits=base_linear.bits,
                     mode=base_linear.mode,
                 )
+                # Materialize per layer so each old weight (and the dense
+                # intermediates) frees before the next bake, instead of every
+                # layer's old+new weights coexisting in one deferred eval.
+                mx.eval(quantized.parameters())
+                return quantized
 
             base_linear.weight = merged.astype(base_linear.weight.dtype)
+            mx.eval(base_linear.weight)
             return base_linear
         except Exception as e:  # noqa: BLE001
             print(f"⚠️  Failed to bake LoRA into base layer: {e}")
