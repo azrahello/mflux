@@ -1,9 +1,6 @@
 import mlx.core as mx
-from PIL import Image
 
 from mflux.models.krea2.model.krea2_transformer.transformer import Krea2Transformer
-from mflux.models.krea2.model.krea2_transformer.transformer_block import SingleStreamBlock
-from mflux.models.krea2.variants.txt2img.krea2 import Krea2
 
 
 def tiny_transformer() -> Krea2Transformer:
@@ -50,24 +47,14 @@ def test_refs_output_covers_target_only():
     assert not mx.allclose(out, out_other).item()
 
 
-def test_block_span_modulation_matches_uniform_when_refvec_equals_vec():
-    # With refvec == vec the per-span path must reduce to the uniform path.
-    block = SingleStreamBlock(features=64, heads=4, multiplier=2, kvheads=2)
-    x = mx.random.normal(shape=(1, 10, 64), key=mx.random.key(4))
-    vec = mx.random.normal(shape=(1, 1, 6 * 64), key=mx.random.key(5))
-    freqs = None
-    uniform = block(x, vec, freqs)
-    spanned = block(x, vec, freqs, refvec=vec, split=6)
-    assert mx.allclose(uniform, spanned, atol=1e-5).item()
-
-
-def test_fit_area_downscales_never_upscales():
-    big = Image.new("RGB", (2000, 1500))
-    fitted = Krea2._fit_area(big, 1024 * 1024, snap=16)
-    w, h = fitted.size
-    assert w % 16 == 0 and h % 16 == 0
-    assert w * h <= 1024 * 1024 * 1.05  # snapping tolerance
-    assert abs((w / h) - (2000 / 1500)) < 0.05
-
-    small = Image.new("RGB", (300, 200))
-    assert Krea2._fit_area(small, 1024 * 1024, snap=1).size == (300, 200)
+def test_refs_modulated_at_current_timestep():
+    # The reference implementation modulates the whole [text|target|refs] sequence
+    # with the current timestep's vector: changing the timestep must change the
+    # output even when only refs distinguish the runs (no t=0 special-casing).
+    t = tiny_transformer()
+    x = mx.random.normal(shape=(1, 4, 8, 8), key=mx.random.key(0))
+    ctx = mx.random.normal(shape=(1, 5, 16), key=mx.random.key(1))
+    ref = mx.random.normal(shape=(1, 4, 8, 8), key=mx.random.key(2))
+    out_a = t(x, mx.array([0.9]), ctx, ref_latents=[ref])
+    out_b = t(x, mx.array([0.1]), ctx, ref_latents=[ref])
+    assert not mx.allclose(out_a, out_b).item()

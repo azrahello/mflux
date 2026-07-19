@@ -96,7 +96,10 @@ class Krea2PromptEncoder:
             template=KREA2_TEMPLATE,
             image_token=vision_tokenizer.image_token,
         )
-        tokens = edit_tokenizer.tokenize(prompt, images=images)
+        # No "Picture N:" label: this LoRA was trained on bare vision markers
+        # (matching the reference ComfyUI node's KREA2_EDIT_TEMPLATE), not the
+        # multi-image-labeled convention --img-ref uses.
+        tokens = edit_tokenizer.tokenize(prompt, images=images, label_images=False)
         embeds = text_encoder.get_prompt_embeds(
             tokens.input_ids,
             tokens.attention_mask,

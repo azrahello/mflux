@@ -1,3 +1,4 @@
+import math
 from typing import NamedTuple
 
 import mlx.core as mx
@@ -65,6 +66,7 @@ class Krea2Transformer(nn.Module):
         attention_mask: mx.array | None = None,
         ref_latents: list[mx.array] | None = None,
         prepared_refs: Krea2PreparedRefs | None = None,
+        ref_boost: float = 1.0,
     ) -> mx.array:
         bs, c, H_orig, W_orig = hidden_states.shape
         patch = self.patch
@@ -89,16 +91,19 @@ class Krea2Transformer(nn.Module):
 
         t = self.tmlp(Krea2TimestepMLP.timestep_embedding(timestep, self.tdim)[:, None, :].astype(img.dtype))
         tvec = self.tproj(t)
-        refvec = None
-        if reflen:
-            t0 = self.tmlp(
-                Krea2TimestepMLP.timestep_embedding(mx.zeros_like(timestep), self.tdim)[:, None, :].astype(img.dtype)
-            )
-            refvec = self.tproj(t0)
 
         txtlen, imglen = context.shape[1], img.shape[1]
         combined = mx.concatenate([context, img], axis=1)
         split = txtlen + imglen - reflen  # start of the reference span
+
+        mask = attention_mask
+        if reflen and ref_boost != 1.0:
+            # Reference-fidelity dial: additive bias on target(query)->ref(key)
+            # attention logits, applied before softmax (equivalent to scaling
+            # those keys' post-softmax weight). log-space since SDPA adds the
+            # mask to Q@K.T/sqrt(d) pre-softmax.
+            bias = Krea2Transformer._ref_boost_bias(txtlen, split, txtlen + imglen, ref_boost, combined.dtype)
+            mask = bias if mask is None else mask + bias
 
         # Position ids: text at (0,0,0); target image at (0, h_idx, w_idx); refs at (i+1, h_idx, w_idx).
         txtpos = mx.zeros((bs, txtlen, 3), dtype=mx.float32)
@@ -114,7 +119,7 @@ class Krea2Transformer(nn.Module):
         gradient_checkpointing = getattr(self, "gradient_checkpointing", False)
         for block in self.blocks:
             run = nn.utils.checkpoint(block) if gradient_checkpointing else block
-            combined = run(combined, tvec, freqs, attention_mask, refvec, split)
+            combined = run(combined, tvec, freqs, mask)
 
         final = self.last(combined, t)
         out = final[:, txtlen:split, :]  # noisy target tokens only
@@ -158,7 +163,7 @@ class Krea2Transformer(nn.Module):
     def prepare_refs(self, ref_latents: list[mx.array], bs: int, dtype: mx.Dtype) -> Krea2PreparedRefs:
         # Patchify the clean reference latents once: each keeps its own y/x grid
         # with RoPE axis-0 frame index i+1 (target = 0). The blocks modulate the
-        # reference span at t=0.
+        # whole sequence, refs included, at the current timestep (reference-matched).
         c, patch = self.channels, self.patch
         ref_tokens: list[mx.array] = []
         ref_pos: list[mx.array] = []
@@ -174,6 +179,20 @@ class Krea2Transformer(nn.Module):
         tokens = mx.concatenate(ref_tokens, axis=1)
         pos = mx.concatenate(ref_pos, axis=1)
         return Krea2PreparedRefs(tokens=tokens, pos=pos, reflen=tokens.shape[1])
+
+    @staticmethod
+    def _ref_boost_bias(txtlen: int, split: int, length: int, ref_boost: float, dtype: mx.Dtype) -> mx.array:
+        # (1, 1, length, length) additive mask: zero everywhere except target
+        # query rows [txtlen:split] attending to reference key columns [split:].
+        tgtlen, reflen = split - txtlen, length - split
+        log_boost = math.log(max(ref_boost, 1e-4))
+        pre_rows = mx.zeros((1, 1, txtlen, length), dtype=dtype)
+        tgt_rows = mx.concatenate(
+            [mx.zeros((1, 1, tgtlen, split), dtype=dtype), mx.full((1, 1, tgtlen, reflen), log_boost, dtype=dtype)],
+            axis=-1,
+        )
+        ref_rows = mx.zeros((1, 1, reflen, length), dtype=dtype)
+        return mx.concatenate([pre_rows, tgt_rows, ref_rows], axis=2)
 
     @staticmethod
     def _pad_to_multiple(x: mx.array, patch: int) -> mx.array:

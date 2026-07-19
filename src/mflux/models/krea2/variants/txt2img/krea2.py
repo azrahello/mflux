@@ -1,4 +1,3 @@
-import math
 from pathlib import Path
 
 import mlx.core as mx
@@ -27,13 +26,13 @@ from mflux.utils.image_util import ImageUtil
 
 IMG_REF_TIER_TARGET_SIZE = {"low": 256, "normal": 512, "high": 1024, "max": 1280}
 
-# In-context edit (ai-toolkit / Ostris) reference sizing, matching training: the
-# Qwen3-VL encoder sees a coarse reference (fit to 384x384 total pixels), the VAE
-# reference latents carry the detail (fit to 1MP, snapped to /16 so the latent
-# grid patchifies). Images are downscaled only, never upscaled.
-EDIT_REF_VLM_MAX_PIXELS = 384 * 384
-EDIT_REF_LATENT_MAX_PIXELS = 1024 * 1024
-EDIT_REF_SNAP = 16
+# In-context edit (ai-toolkit / Ostris) reference sizing: the Qwen3-VL encoder
+# sees a coarse reference for semantic grounding, longest side capped at 768px
+# (downscale only) -- matching the reference ComfyUI node's grounding_px=768
+# (trained jitter range 384-768). The VAE reference latents are handled
+# separately in _encode_edit_refs, fit to the exact target grid so ref/target
+# RoPE positions align 1:1.
+EDIT_REF_VLM_MAX_SIDE = 768
 
 
 class Krea2(nn.Module):
@@ -86,6 +85,7 @@ class Krea2(nn.Module):
         img_ref_details: list[str] | None = None,
         img_ref_rebalance: bool = False,
         edit_ref_paths: list[Path | str] | None = None,
+        edit_ref_boost: float = 1.0,
     ) -> GeneratedImage:
         if edit_ref_paths and (img_ref_paths or img_ref_rebalance):
             raise ValueError("--edit-ref and --img-ref/--img-ref-rebalance are mutually exclusive.")
@@ -114,14 +114,25 @@ class Krea2(nn.Module):
                 self.model_config.sigma_max_shift,
                 start=1.0 - image_strength,
             )
+        elif edit_ref_paths:
+            # The reference ComfyUI workflow samples Krea 2 with a FIXED flow shift
+            # of 1.15 (exp-applied), not the dynamic resolution-based shift used for
+            # plain t2i; the edit LoRAs are tuned on that trajectory.
+            sigmas = Krea2Sampler.flow_sigmas(num_inference_steps, self.model_config.sigma_max_shift)
         else:
             sigmas = config.scheduler.sigmas
         latents = self._prepare_latents(seed=seed, config=config, sigmas=sigmas, is_img2img=is_img2img)
         edit_ref_latents = None
         if edit_ref_paths:
-            edit_images = [
-                Krea2._fit_area(ImageUtil.load_image(p).convert("RGB"), EDIT_REF_VLM_MAX_PIXELS) for p in edit_ref_paths
-            ]
+            # Cap the longest side at 768 (downscale only, area filter) exactly like
+            # the reference node's _prep -- a total-pixel budget would hand the VLM a
+            # different (out-of-distribution) vision grid for non-square inputs.
+            edit_images = []
+            for p in edit_ref_paths:
+                image = ImageUtil.load_image(p).convert("RGB")
+                if max(image.size) > EDIT_REF_VLM_MAX_SIDE:
+                    image = Krea2._resize_to_longest_side(image, EDIT_REF_VLM_MAX_SIDE)
+                edit_images.append(image)
             embeds, neg_embeds = Krea2PromptEncoder.encode_edit_prompt_pair(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -131,7 +142,7 @@ class Krea2(nn.Module):
                 vision_tokenizer=self.tokenizers["qwen3vl_vision"],
                 text_encoder=self.text_encoder,
             )
-            edit_ref_latents = self._encode_edit_refs(edit_ref_paths)
+            edit_ref_latents = self._encode_edit_refs(edit_ref_paths, height=height, width=width)
             scheduled_embeds = [embeds]
             plan = [(0, 1.0)] * num_inference_steps
         elif img_ref_rebalance and img_ref_paths:
@@ -168,7 +179,11 @@ class Krea2(nn.Module):
             ]
             if neg_embeds is not None:
                 neg_embeds = ConditioningBands.scale_bands(
-                    neg_embeds, conditioning_weights, conditioning_renormalize, conditioning_multiplier, conditioning_clamp
+                    neg_embeds,
+                    conditioning_weights,
+                    conditioning_renormalize,
+                    conditioning_multiplier,
+                    conditioning_clamp,
                 )
             if conditioning_crossover is None:
                 # No time-gating: weights apply to every step (previous behavior).
@@ -204,7 +219,7 @@ class Krea2(nn.Module):
         stepper = Krea2Sampler.make_stepper(resolved_scheduler, sigmas, seed)
         ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
         ctx.before_loop(latents)
-        predict = self._predict(self.transformer, neg_embeds, edit_ref_latents)
+        predict = self._predict(self.transformer, neg_embeds, edit_ref_latents, ref_boost=edit_ref_boost)
 
         for t in config.time_steps:
             try:
@@ -271,6 +286,7 @@ class Krea2(nn.Module):
             img_ref_details=img_ref_details,
             img_ref_rebalance=img_ref_rebalance,
             edit_ref_paths=edit_ref_paths,
+            edit_ref_boost=edit_ref_boost,
         )
 
     def save_model(self, base_path: str) -> None:
@@ -330,26 +346,25 @@ class Krea2(nn.Module):
         # BOX = area averaging, matching the reference's common_upscale(..., "area").
         return image.resize((new_width, new_height), Image.BOX)
 
-    @staticmethod
-    def _fit_area(image: Image.Image, max_pixels: int, snap: int = 1) -> Image.Image:
-        # Downscale (never upscale) to fit max_pixels, keeping aspect, dims snapped to `snap`.
-        width, height = image.size
-        scale = min(1.0, math.sqrt(max_pixels / (width * height)))
-        new_width = max(round(width * scale / snap) * snap, snap)
-        new_height = max(round(height * scale / snap) * snap, snap)
-        if (new_width, new_height) == (width, height):
-            return image
-        return image.resize((new_width, new_height), Image.BOX)
-
-    def _encode_edit_refs(self, paths: list[Path | str]) -> list[mx.array]:
+    def _encode_edit_refs(self, paths: list[Path | str], height: int, width: int) -> list[mx.array]:
         # Clean reference latents for the in-context edit path: each reference is
-        # VAE-encoded at its own resolution (fit to 1MP, /16) into the same
-        # normalized latent space as the initial noise.
+        # center-cropped to the target aspect ratio, then resized to the exact
+        # target pixel grid before VAE-encoding, so its patch grid (and RoPE
+        # position ids in prepare_refs) line up 1:1 with the target's -- the
+        # in-context attention has no other way to correlate "this ref pixel" with
+        # "this target pixel" than matching position ids on both axes. Crop+bicubic
+        # matches the reference node's pixel path (its 'fit' mode reduces to this
+        # whenever source and target aspect ratios are within 8%).
+        # ponytail: true 'fit' for a large AR mismatch (fit-inside + centered
+        # position offset) not implemented; add if mismatched-AR edits blur/seam.
         latents = []
         for path in paths:
-            image = Krea2._fit_area(
-                ImageUtil.load_image(path).convert("RGB"), EDIT_REF_LATENT_MAX_PIXELS, snap=EDIT_REF_SNAP
-            )
+            image = ImageUtil.load_image(path).convert("RGB")
+            iw, ih = image.size
+            s = max(width / iw, height / ih)
+            cw, ch = min(iw, round(width / s)), min(ih, round(height / s))
+            x0, y0 = (iw - cw) // 2, (ih - ch) // 2
+            image = image.crop((x0, y0, x0 + cw, y0 + ch)).resize((width, height), Image.BICUBIC)
             latents.append(
                 VAEUtil.encode(vae=self.vae, image=ImageUtil.to_array(image), tiling_config=self.tiling_config)
             )
@@ -379,6 +394,7 @@ class Krea2(nn.Module):
         transformer: Krea2Transformer,
         neg_embeds: mx.array | None,
         ref_latents: list[mx.array] | None = None,
+        ref_boost: float = 1.0,
     ):
         dtype = ModelConfig.precision
         # Reference latents are constant for the whole generation: patchify them
@@ -398,7 +414,7 @@ class Krea2(nn.Module):
             # Embeds are NOT pre-cast: pre-fused ones already carry the activation
             # dtype, while raw (band-scaled) ones can exceed float16 range and must
             # reach fuse_context's fp32 path unclipped -- it casts on the way out.
-            v = transformer(latents.astype(dtype), timestep, embeds, prepared_refs=prepared_refs)
+            v = transformer(latents.astype(dtype), timestep, embeds, prepared_refs=prepared_refs, ref_boost=ref_boost)
             if neg_embeds is not None:
                 # The negative branch runs without reference tokens, matching the
                 # reference wiring (refs ride only the positive conditioning).

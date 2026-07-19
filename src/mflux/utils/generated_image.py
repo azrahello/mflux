@@ -54,6 +54,7 @@ class GeneratedImage:
         img_ref_details: list[str] | None = None,
         img_ref_rebalance: bool = False,
         edit_ref_paths: list[str] | list[Path] | None = None,
+        edit_ref_boost: float = 1.0,
     ):
         self.image = image
         self.model_config = model_config
@@ -93,6 +94,7 @@ class GeneratedImage:
         self.img_ref_details = img_ref_details
         self.img_ref_rebalance = img_ref_rebalance
         self.edit_ref_paths = edit_ref_paths
+        self.edit_ref_boost = edit_ref_boost
 
     def get_right_half(self) -> "GeneratedImage":
         # Calculate the coordinates for the right half
@@ -135,6 +137,7 @@ class GeneratedImage:
             img_ref_details=self.img_ref_details,
             img_ref_rebalance=self.img_ref_rebalance,
             edit_ref_paths=self.edit_ref_paths,
+            edit_ref_boost=self.edit_ref_boost,
         )
 
     def save(
@@ -292,6 +295,7 @@ class GeneratedImage:
             "img_ref_details": self.img_ref_details if self.img_ref_paths else None,
             "img_ref_rebalance": self.img_ref_rebalance if self.img_ref_paths else None,
             "edit_ref_paths": [str(p) for p in self.edit_ref_paths] if self.edit_ref_paths else None,
+            "edit_ref_boost": self.edit_ref_boost if self.edit_ref_paths else None,
         }
 
         # If we have initial metadata from a source image, merge it

@@ -137,6 +137,7 @@ class VisionLanguageTokenizer(BaseTokenizer):
         prompt: str | list[str],
         images: list[Image.Image] | None = None,
         max_length: int | None = None,
+        label_images: bool = True,
         **kwargs,
     ) -> TokenizerOutput:
         max_length = max_length or self.max_length
@@ -147,7 +148,8 @@ class VisionLanguageTokenizer(BaseTokenizer):
         if self.template and images:
             img_prompt = ""
             for i in range(len(images)):
-                img_prompt += f"Picture {i + 1}: <|vision_start|>{self.image_token}<|vision_end|>"
+                label = f"Picture {i + 1}: " if label_images else ""
+                img_prompt += f"{label}<|vision_start|>{self.image_token}<|vision_end|>"
             formatted_text = self.template.format(img_prompt + prompt[0])
         elif self.template:
             formatted_text = self.template.format(prompt[0])

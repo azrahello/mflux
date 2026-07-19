@@ -68,6 +68,7 @@ class ImageUtil:
         img_ref_details: list[str] | None = None,
         img_ref_rebalance: bool = False,
         edit_ref_paths: list[str] | list[Path] | None = None,
+        edit_ref_boost: float = 1.0,
     ) -> GeneratedImage:
         normalized = ImageUtil._denormalize(decoded_latents)
         normalized_numpy = ImageUtil._to_numpy(normalized)
@@ -111,6 +112,7 @@ class ImageUtil:
             img_ref_details=img_ref_details,
             img_ref_rebalance=img_ref_rebalance,
             edit_ref_paths=edit_ref_paths,
+            edit_ref_boost=edit_ref_boost,
         )
 
     @staticmethod

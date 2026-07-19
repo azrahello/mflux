@@ -104,6 +104,107 @@ Supported export formats include official Krea (`transformer.*`), diffusers/PEFT
 > plus text encoder and VAE, ~33 GB total on first run). Use `-q 8` at inference or save
 > a quantized copy with `mflux-save`; see [quantization docs](../common/README.md#quantization).
 
+## Conditioning controls
+
+Krea 2's text encoder taps 12 hidden layers and stacks them into one conditioning
+tensor before it reaches the DiT. These flags let you reweight that stack per
+generation — no retraining, fully reversible — for style/color shifts or to fix
+overflow artifacts on extreme settings.
+
+```sh
+mflux-generate-krea2 \
+  --prompt "a photograph of a red fox sitting in a sunlit forest clearing" \
+  --conditioning-weights "1.0,1.0,1.0,1.0,1.2,1.2,1.2,1.0,1.0,1.0,1.0,1.0" \
+  --conditioning-renormalize \
+  --steps 8 -q 8
+```
+
+- `--conditioning-weights` — comma-separated per-layer weights, one per tapped
+  layer (12 for Krea 2). Default is neutral (all `1.0`, no effect).
+- `--conditioning-renormalize` — rescale back to the original RMS magnitude
+  after weighting, so uneven weights don't inflate or collapse overall
+  conditioning strength (which hurts prompt adherence or oversaturates colors).
+- `--conditioning-multiplier` — uniform gain applied to the whole tensor,
+  after weights/renormalize. Default `1.0`.
+- `--conditioning-clamp` — clamps `|conditioning value|` after the above.
+  float16 has limited range, so extreme weights can silently overflow to `inf`
+  and render a black image — most relevant with `--img-ref`. Try `30`–`60` if
+  you see that. Default `0` (no clamp).
+- `--guidance-schedule` — piecewise guidance over the denoise steps, e.g.
+  `'0.0-0.5:1.0;0.5-1.0:0.8'`, overriding `--guidance` with a per-step value.
+
+### Time-gating
+
+Apply `--conditioning-weights` only for part of the run instead of every step,
+then hand off to the plain (unweighted) conditioning:
+
+```sh
+mflux-generate-krea2 \
+  --prompt "..." --conditioning-weights "..." \
+  --conditioning-crossover 0.4 --conditioning-overlap 0.1 \
+  --steps 8 -q 8
+```
+
+- `--conditioning-crossover` — normalized denoise progress in `[0,1]` (0 =
+  first step, 1 = last) where the weighted conditioning hands off to plain.
+  Unset by default (weights apply every step).
+- `--conditioning-overlap` — half-width of a blend window straddling the
+  crossover, e.g. crossover `0.4` overlap `0.1` blends linearly from fully
+  weighted at progress `0.3` to fully plain at `0.5`. `0` (default) = hard
+  cutover. Ignored without `--conditioning-crossover`.
+
+## Text-fusion projector rebalance
+
+Separate from per-generation conditioning weights: `--projector-rebalance-weights`
+patches the model's learned `txtfusion.projector` (the `Linear[layers→1]` that
+fuses the 12 tapped layers into one conditioning) with a reversible, LoRA-style
+diff applied once at load time.
+
+```sh
+mflux-generate-krea2 \
+  --prompt "..." \
+  --projector-rebalance-strength 0.05 \
+  --steps 8 -q 8
+```
+
+- `--projector-rebalance-strength` alone activates Krea 2's preset diffs (the
+  identity-edit recipe, ported from the ComfyUI `AzKrea2ProjectorRebalance`
+  node) — the patch is opt-in, off by default. The diffs are large, so keep
+  strength small (`0.05` default when active) and raise until output
+  destabilizes.
+- `--projector-rebalance-weights` overrides the preset with your own
+  comma-separated per-layer diffs (12 values), or pass `none` to force the
+  patch off.
+
+## Reference images
+
+```sh
+mflux-generate-krea2 \
+  --prompt "the same pedestal but with a coffee mug instead of sunglasses" \
+  --img-ref path/to/sunglasses_scene.jpg \
+  --img-ref-rebalance \
+  --steps 8 -q 8
+```
+
+- `--img-ref PATH [PATH ...]` — one or more reference images conditioning
+  generation through the text encoder's vision tower (Redux-style). The
+  starting latent stays pure noise — unlike `--image`, which noises an image
+  into the starting latent. Also switches the prompt template to the
+  image-edit one, so the same text prompt encodes differently with and
+  without `--img-ref`.
+- `--img-ref-detail TIER [TIER ...]` — per-image detail tier (`low`, `normal`,
+  `high`, `max`), aligned by position; images without one default to `normal`.
+- `--img-ref-rebalance` — applies the edit-rebalance conditioning recipe:
+  subject-band refocus plus dissimilarity guidance against the reference
+  images, with a time-scheduled hand-off from plain text conditioning. No
+  effect without `--img-ref`.
+- `--edit-ref PATH [PATH ...]` — up to 3 reference images for in-context edit
+  LoRAs (ai-toolkit style): each is VAE-encoded and appended to the DiT
+  sequence as clean tokens modulated at `t=0`, and also fed to the vision
+  tower under the base template with `Picture N:` markers. The starting
+  latent stays pure noise. Requires an edit-trained LoRA (`--lora-paths`) to
+  have any effect; mutually exclusive with `--img-ref`.
+
 ## Training
 
 Train a LoRA on **Krea 2 Raw** ([`krea/Krea-2-Raw`](https://huggingface.co/krea/Krea-2-Raw)),

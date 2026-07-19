@@ -137,6 +137,7 @@ def main():
                 img_ref_details=args.img_ref_detail,
                 img_ref_rebalance=args.img_ref_rebalance,
                 edit_ref_paths=args.edit_ref,
+                edit_ref_boost=args.edit_ref_boost,
             )
             # 4. Save the image
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)
