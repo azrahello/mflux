@@ -6,6 +6,7 @@ from mlx import nn
 from mflux.models.common.config import ModelConfig
 from mflux.models.common.config.config import Config
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.vae.vae_util import VAEUtil
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
@@ -55,6 +56,8 @@ class QwenImage(nn.Module):
         image_strength: float | None = None,
         scheduler: str = "linear",
         negative_prompt: str | None = None,
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -66,6 +69,9 @@ class QwenImage(nn.Module):
             image_strength=image_strength,
             model_config=self.model_config,
             num_inference_steps=num_inference_steps,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
 
         # 1. Create the initial latents
@@ -138,7 +144,10 @@ class QwenImage(nn.Module):
 
         # 8. Decode the latent array and return the image
         latents = QwenLatentCreator.unpack_latents(latents=latents, height=config.height, width=config.width)
-        decoded = VAEUtil.decode(vae=self.vae, latent=latents, tiling_config=self.tiling_config)
+        if pid_decode:
+            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma)
+        else:
+            decoded = VAEUtil.decode(vae=self.vae, latent=latents, tiling_config=self.tiling_config)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,

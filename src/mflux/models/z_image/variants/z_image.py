@@ -7,6 +7,7 @@ from PIL import Image
 from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.latent_creator.latent_creator import Img2Img, LatentCreator
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.vae.vae_util import VAEUtil
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.z_image.latent_creator import ZImageLatentCreator
@@ -56,6 +57,8 @@ class ZImage(nn.Module):
         image_strength: float | None = None,
         scheduler: str | None = None,
         negative_prompt: str | None = None,
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> Image.Image:
         supports_guidance = bool(self.model_config.supports_guidance)
         if not supports_guidance:
@@ -74,6 +77,9 @@ class ZImage(nn.Module):
             image_strength=image_strength,
             model_config=self.model_config,
             num_inference_steps=num_inference_steps,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
         # 1. Create the initial latents
         latents = LatentCreator.create_for_txt2img_or_img2img(
@@ -130,10 +136,15 @@ class ZImage(nn.Module):
                 )
 
         # 7. Call subscribers after loop
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict = None
         ctx.after_loop(latents)
 
         # 8. Decode the latents and return the image
-        decoded = self._decode_latents(latents=latents, config=config)
+        decoded = self._decode_latents(latents=latents, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -170,8 +181,12 @@ class ZImage(nn.Module):
         )
         return text_encodings, negative_encodings
 
-    def _decode_latents(self, *, latents: mx.array, config: Config) -> mx.array:
+    def _decode_latents(
+        self, *, latents: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False
+    ) -> mx.array:
         unpacked = ZImageLatentCreator.unpack_latents(latents, config.height, config.width)
+        if pid_decode:
+            return pid_decode_latents(vae=self.vae, latent=unpacked, caption=prompt, seed=seed, sigma=config.pid_sigma)
         return VAEUtil.decode(vae=self.vae, latent=unpacked, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

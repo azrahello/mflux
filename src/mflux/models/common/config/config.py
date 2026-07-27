@@ -12,6 +12,11 @@ from mflux.utils.scale_factor import ScaleFactor
 
 logger = logging.getLogger(__name__)
 
+# PiD's LQ conditioning was trained on latents noised at sigma ~ U[0.0, 0.8]
+# (add_sigma_max in nvidia/PiD's v1pt5 teacher configs). Past that the decoder has
+# never seen the input distribution.
+PID_MAX_TRAINED_SIGMA = 0.8
+
 
 class Config:
     def __init__(
@@ -29,6 +34,7 @@ class Config:
         masked_image_path: Path | str | None = None,
         controlnet_strength: float | None = None,
         scheduler: str = "linear",
+        pid_skip_steps: int = 0,
     ):
         # Resolve any missing dimension dynamically, using the reference image when available.
         if width is None or height is None:
@@ -58,6 +64,14 @@ class Config:
         self._scheduler_str = scheduler
         self._scheduler = None
         self._time_steps = None
+        self._pid_skip_steps = int(pid_skip_steps)
+        if self._pid_skip_steps < 0:
+            raise ValueError(f"pid_skip_steps must be >= 0, got {self._pid_skip_steps}")
+        if self._pid_skip_steps and self._pid_skip_steps >= num_inference_steps - self.init_time_step:
+            raise ValueError(
+                f"pid_skip_steps={self._pid_skip_steps} would leave no denoising steps to run "
+                f"(steps {self.init_time_step}..{num_inference_steps})"
+            )
 
     @property
     def height(self) -> int:
@@ -135,8 +149,29 @@ class Config:
     @property
     def time_steps(self) -> tqdm:
         if self._time_steps is None:
-            self._time_steps = tqdm(range(self.init_time_step, self.num_inference_steps))
+            self._time_steps = tqdm(range(self.init_time_step, self.num_inference_steps - self._pid_skip_steps))
         return self._time_steps
+
+    @property
+    def pid_sigma(self) -> float:
+        """Flow-matching noise level of the latent left by the loop above, for PiD's sigma-aware
+        adapter. `scheduler.step(timestep=t)` advances sigmas[t] -> sigmas[t+1], so the latent
+        after the last executed step sits at sigmas[num_inference_steps - pid_skip_steps]. This
+        matches PiD's own `sigma_idx = step_index + 1` (step_capture.py), and both sides use the
+        same convention -- PiD's "flow_matching" backbone is x_t = (1-s)*x_0 + s*eps, identical
+        to LatentCreator.add_noise_by_interpolation, so no frame conversion is needed.
+
+        With pid_skip_steps=0 this lands on the schedule's final sigma (0.0), i.e. a fully
+        denoised latent -- no special case needed for the default path.
+        """
+        sigma = float(self.scheduler.sigmas[self.num_inference_steps - self._pid_skip_steps])
+        if sigma > PID_MAX_TRAINED_SIGMA:
+            raise ValueError(
+                f"pid_skip_steps={self._pid_skip_steps} leaves the latent at sigma={sigma:.3f}, beyond the "
+                f"sigma<={PID_MAX_TRAINED_SIGMA} range PiD was trained on -- it would decode noise. "
+                "Skip fewer steps."
+            )
+        return sigma
 
     @property
     def controlnet_strength(self) -> float | None:

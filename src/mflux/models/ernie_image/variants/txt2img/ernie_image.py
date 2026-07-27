@@ -7,6 +7,7 @@ from PIL import Image
 from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.latent_creator.latent_creator import LatentCreator
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.ernie_image.ernie_image_initializer import ErnieImageInitializer
 from mflux.models.ernie_image.latent_creator import ErnieLatentCreator
@@ -55,6 +56,8 @@ class ErnieImage(nn.Module):
         image_strength: float | None = None,
         scheduler: str | None = None,
         negative_prompt: str | None = None,
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> Image.Image:
         if scheduler is None:
             scheduler = "linear"
@@ -68,6 +71,9 @@ class ErnieImage(nn.Module):
             image_strength=image_strength,
             model_config=self.model_config,
             num_inference_steps=num_inference_steps,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
 
         latents = self._prepare_latents(seed=seed, config=config)
@@ -102,9 +108,14 @@ class ErnieImage(nn.Module):
                     f"Stopping image generation at step {t + 1}/{config.num_inference_steps}"
                 )
 
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict = None
         ctx.after_loop(latents)
 
-        decoded = self._decode_latents(latents=latents)
+        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode, sigma=config.pid_sigma)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -163,7 +174,12 @@ class ErnieImage(nn.Module):
         self.prompt_cache[cache_key] = (text_bth, text_lens)
         return text_bth, text_lens
 
-    def _decode_latents(self, *, latents: mx.array) -> mx.array:
+    def _decode_latents(
+        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0
+    ) -> mx.array:
+        if pid_decode:
+            lq_latent = self.vae.unpack_packed_latents(latents)
+            return pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=sigma)
         return self.vae.decode_packed_latents(latents, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

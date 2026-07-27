@@ -6,6 +6,7 @@ from mlx import nn
 from mflux.models.common.config import ModelConfig
 from mflux.models.common.config.config import Config
 from mflux.models.common.latent_creator.latent_creator import LatentCreator
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.krea2.krea2_initializer import Krea2Initializer
 from mflux.models.krea2.latent_creator.krea2_latent_creator import Krea2LatentCreator
@@ -56,6 +57,8 @@ class Krea2(nn.Module):
         image_path: Path | str | None = None,
         image_strength: float | None = None,
         scheduler: str | None = None,
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> GeneratedImage:
         resolved_scheduler = Krea2._resolve_scheduler(scheduler)
 
@@ -68,6 +71,9 @@ class Krea2(nn.Module):
             image_path=image_path,
             image_strength=image_strength,
             scheduler=resolved_scheduler,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
 
         sigmas = config.scheduler.sigmas
@@ -99,9 +105,14 @@ class Krea2(nn.Module):
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {t + 1}/{config.num_inference_steps}"
                 )
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict = None
         ctx.after_loop(latents)
 
-        decoded = self._decode_latents(latents=latents)
+        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode, sigma=config.pid_sigma)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -156,7 +167,11 @@ class Krea2(nn.Module):
         sigma = float(config.scheduler.sigmas[config.init_time_step])
         return LatentCreator.add_noise_by_interpolation(clean=clean_latents, noise=pure_noise, sigma=sigma)
 
-    def _decode_latents(self, *, latents: mx.array) -> mx.array:
+    def _decode_latents(
+        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0
+    ) -> mx.array:
+        if pid_decode:
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=sigma)
         return self.vae.decode(latents)
 
     @staticmethod

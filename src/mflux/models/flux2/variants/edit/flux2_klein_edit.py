@@ -177,6 +177,12 @@ class Flux2KleinEdit(nn.Module):
                     f"Stopping image generation at step {t + 1}/{config.num_inference_steps}"
                 )
 
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict = None
+        cached_predict = None
         ctx.after_loop(latents)
 
         # 6. Decode latents

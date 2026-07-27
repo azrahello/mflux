@@ -4,6 +4,7 @@ import mlx.core as mx
 from mlx import nn
 
 from mflux.models.common.config import Config, ModelConfig
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
 from mflux.models.ideogram4.ideogram4_initializer import Ideogram4Initializer
@@ -53,6 +54,8 @@ class Ideogram4(nn.Module):
         preset: str | None = None,
         strict_caption_validation: bool = False,
         warn_on_caption_issues: bool = True,
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
             prompt,
@@ -77,6 +80,9 @@ class Ideogram4(nn.Module):
             scheduler="linear",
             model_config=self.model_config,
             num_inference_steps=num_steps,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
 
         inputs = Ideogram4PromptEncoder.build_inputs(
@@ -139,9 +145,15 @@ class Ideogram4(nn.Module):
                 raise StopImageGenerationException(
                     f"Stopping image generation at step {step_index + 1}/{config.num_inference_steps}"
                 )
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict_conditional = None
+        predict_unconditional = None
         ctx.after_loop(z)
 
-        decoded = self._decode_latents(z=z, config=config)
+        decoded = self._decode_latents(z=z, config=config, prompt=prompt, seed=seed, pid_decode=pid_decode)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -161,8 +173,13 @@ class Ideogram4(nn.Module):
             weight_definition=Ideogram4WeightDefinition,
         )
 
-    def _decode_latents(self, *, z: mx.array, config: Config) -> mx.array:
-        return self.vae.decode(Ideogram4LatentCreator.unpack_latents(z, config.height, config.width))
+    def _decode_latents(
+        self, *, z: mx.array, config: Config, prompt: str, seed: int, pid_decode: bool = False
+    ) -> mx.array:
+        latents = Ideogram4LatentCreator.unpack_latents(z, config.height, config.width)
+        if pid_decode:
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma)
+        return self.vae.decode(latents)
 
     @staticmethod
     def _predict_conditional(transformer: Ideogram4Transformer):

@@ -6,6 +6,7 @@ from mlx import nn
 from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.latent_creator.latent_creator import LatentCreator
+from mflux.models.common.pid_decoder.pid_decoder import pid_decode_latents
 from mflux.models.common.weights.saving.model_saver import ModelSaver
 from mflux.models.flux2.flux2_initializer import Flux2Initializer
 from mflux.models.flux2.latent_creator.flux2_latent_creator import Flux2LatentCreator
@@ -55,6 +56,8 @@ class Flux2Klein(nn.Module):
         image_path: Path | str | None = None,
         image_strength: float | None = None,
         scheduler: str = "flow_match_euler_discrete",
+        pid_decode: bool = False,
+        pid_skip_steps: int = 0,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -66,6 +69,9 @@ class Flux2Klein(nn.Module):
             image_path=image_path,
             image_strength=image_strength,
             scheduler=scheduler,
+            # Only PiD can finish denoising in pixel space; without it a shortened loop
+            # would just hand the VAE an under-denoised latent.
+            pid_skip_steps=pid_skip_steps if pid_decode else 0,
         )
         # 1. Encode prompt(s)
         prompt_embeds, text_ids, negative_prompt_embeds, negative_text_ids = self._encode_prompt_pair(
@@ -111,11 +117,20 @@ class Flux2Klein(nn.Module):
                     f"Stopping image generation at step {t + 1}/{config.num_inference_steps}"
                 )
 
+        # Drop the transformer closure before the after-loop callbacks run: MemorySaver's
+        # `--low-ram` eviction sets `model.transformer = None`, but this local still holds a
+        # strong reference, so the weights would never actually be freed (measured: 25.6 GB
+        # kept alive on Krea 2). Nothing below the loop uses it.
+        predict = None
         ctx.after_loop(latents)
 
         # 5. Decode latents
         packed_latents = latents.reshape(latents.shape[0], latent_height, latent_width, latents.shape[-1]).transpose(0, 3, 1, 2)  # fmt: off
-        decoded = self.vae.decode_packed_latents(packed_latents)
+        if pid_decode:
+            lq_latent = self.vae.unpack_packed_latents(packed_latents)
+            decoded = pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=config.pid_sigma)
+        else:
+            decoded = self.vae.decode_packed_latents(packed_latents)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,

@@ -29,3 +29,6 @@ build/
 .fls
 .aux
 .log
+
+# agent scaffolding: piani/spec di lavoro, non parte del progetto
+docs/superpowers/

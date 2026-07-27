@@ -171,6 +171,10 @@ class CommandLineParser(argparse.ArgumentParser):
         self.add_argument("--redux-image-paths", type=Path, nargs="*", required=True, help="Local path to the source image")
         self.add_argument("--redux-image-strengths", type=float, nargs="*", default=None, help="Strength values (between 0.0 and 1.0) for each reference image. Default is 1.0 for all images.")
 
+    def add_pid_decode_arguments(self) -> None:
+        self.add_argument("--pid-decode", action="store_true", help="Decode with NVIDIA PiD's pixel-diffusion super-resolving decoder instead of the standard VAE. First run downloads two separate Hugging Face checkpoints (~8GB total); google/gemma-2-2b-it is gated and requires accepting its license + `hf auth login`.")
+        self.add_argument("--pid-skip-steps", type=int, default=0, help="With --pid-decode, stop the diffusion loop this many steps early and let PiD finish denoising in pixel space. The PiD paper reports the last 3-5 steps of a 28-50 step schedule are better skipped than run (Fig. 8); on short turbo schedules each skipped step is a much bigger jump, so start at 1. Ignored without --pid-decode.")
+
     def add_output_arguments(self) -> None:
         self.add_argument("--metadata", action="store_true", help="Export image metadata as a JSON file.")
         self.add_argument("--output", type=str, default="image.png", help="The filename for the output image. Default is \"image.png\".")

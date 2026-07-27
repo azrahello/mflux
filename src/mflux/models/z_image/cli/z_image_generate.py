@@ -18,6 +18,7 @@ def main():
     parser.add_lora_arguments()
     parser.add_image_generator_arguments(supports_metadata_config=True)
     parser.add_image_to_image_arguments()
+    parser.add_pid_decode_arguments()
     parser.add_output_arguments()
     args = parser.parse_args()
 
@@ -64,6 +65,8 @@ def main():
                 image_strength=args.image_strength,
                 scheduler=args.scheduler,
                 negative_prompt=args.negative_prompt,
+                pid_decode=args.pid_decode,
+                pid_skip_steps=args.pid_skip_steps,
             )
             # 4. Save the image
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)
