@@ -63,6 +63,7 @@ def main():
                 image_strength=args.image_strength,
                 pid_decode=args.pid_decode,
                 pid_skip_steps=args.pid_skip_steps,
+                pid_resize=args.pid_resize,
             )
             # 4. Save the image
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)

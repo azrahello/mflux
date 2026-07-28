@@ -35,6 +35,7 @@ class Config:
         controlnet_strength: float | None = None,
         scheduler: str = "linear",
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ):
         # Resolve any missing dimension dynamically, using the reference image when available.
         if width is None or height is None:
@@ -72,6 +73,17 @@ class Config:
                 f"pid_skip_steps={self._pid_skip_steps} would leave no denoising steps to run "
                 f"(steps {self.init_time_step}..{num_inference_steps})"
             )
+        self.pid_resize = pid_resize
+        if pid_resize is not None:
+            # The released checkpoints super-resolve 2k->4k, so PiD's input has to stay in that band.
+            if not 512 <= pid_resize <= 1024:
+                raise ValueError(f"pid_resize must be between 512 and 1024, got {pid_resize}")
+            if self._pid_skip_steps:
+                raise ValueError(
+                    "pid_resize cannot be combined with pid_skip_steps: the resize round-trips the latent "
+                    "through pixels, which would bake the residual noise pid_skip_steps leaves behind into "
+                    "the image while PiD still believes it is denoising at sigma > 0."
+                )
 
     @property
     def height(self) -> int:

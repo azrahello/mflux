@@ -16,8 +16,10 @@ from mflux.models.common.pid_decoder.pid_sampler import sample
 from mflux.models.common.pid_decoder.pid_weight_mapping import convert_checkpoint
 from mflux.models.common.pid_decoder.pixdit.pixdit_network import PidNet
 from mflux.models.common.tokenizer.tokenizer_loader import TokenizerLoader
+from mflux.models.common.vae.vae_util import VAEUtil
 from mflux.models.common.weights.loading.weight_definition import TokenizerDefinition
 from mflux.models.common.weights.loading.weight_loader import WeightLoader
+from mflux.utils.image_util import ImageUtil
 
 PID_REPO_DEFAULT = "nvidia/PiD"
 GEMMA2_REPO = "google/gemma-2-2b-it"
@@ -49,10 +51,15 @@ def _load_decoder(variant: str) -> "PidDecoder":
     return PidDecoder.from_pretrained(variant=variant)
 
 
-def pid_decode_latents(*, vae: nn.Module, latent: mx.array, caption: str, seed: int, sigma: float = 0.0) -> mx.array:
+def pid_decode_latents(
+    *, vae: nn.Module, latent: mx.array, caption: str, seed: int, sigma: float = 0.0, resize: int | None = None
+) -> mx.array:
     """Decode `latent` with PiD instead of `vae`, picking the checkpoint from the VAE's own
     `pid_variant`. `latent` must be the unpacked VAE latent -- [B, C, H/8, W/8], the exact
     tensor `vae.decode` would receive.
+
+    `resize` (long side, px) re-renders the latent at another resolution first, so PiD's fixed
+    4x lands on the output size the caller wants instead of on 4x the generation size.
 
     Cached across calls (and across model instances) because loading costs ~8GB of downloads;
     the base pipeline's MLX buffers are released first, since PidNet's working set is much
@@ -63,10 +70,35 @@ def pid_decode_latents(*, vae: nn.Module, latent: mx.array, caption: str, seed: 
             f"--pid-decode: no PiD checkpoint covers {type(vae).__name__}'s latent space. "
             f"Supported: {sorted(PID_CHECKPOINT_VARIANTS)}."
         )
+    if resize is not None:
+        latent = _resize_latent(vae=vae, latent=latent, long_side=resize)
     decoder = _load_decoder(variant)
     gc.collect()
     mx.clear_cache()
     return decoder.decode(latent=latent, caption=caption, seed=seed, sigma=sigma)
+
+
+def _resize_latent(*, vae: nn.Module, latent: mx.array, long_side: int) -> mx.array:
+    """Re-encode `latent` at a resolution whose 4x is the output the caller asked for, keeping
+    the generation's aspect ratio.
+
+    Round-trips through pixels (decode -> Lanczos -> encode) rather than interpolating the latent
+    grid: a latent cell is a non-linear code of an 8x8 patch, so averaging neighbours is not the
+    code of the averaged patch -- it smears, and an un-prefiltered downscale aliases. The pixel
+    path also lands PiD's LQ gate exactly where it was distilled, on real VAE latents of
+    downscaled images. Both VAE passes are negligible next to PidNet's 4 steps at 2-4k.
+    """
+    height, width = (dim * PidDecoder.VAE_COMPRESSION for dim in latent.shape[2:])
+    scale = long_side / max(height, width)
+    # Multiples of 8 keep the re-encoded latent grid integral; the resulting output is a
+    # multiple of 32, so the round values (512/648/768/1024) land on their 4x exactly.
+    target_h, target_w = (max(8, round(dim * scale / 8) * 8) for dim in (height, width))
+    if (target_h, target_w) == (height, width):
+        return latent
+
+    image = ImageUtil.to_pil(VAEUtil.decode(vae=vae, latent=latent))
+    resized = ImageUtil.scale_to_dimensions(image, target_width=target_w, target_height=target_h)
+    return VAEUtil.encode(vae=vae, image=ImageUtil.to_array(resized))
 
 
 def _assert_full_weight_coverage(module: nn.Module, supplied: dict, label: str) -> None:

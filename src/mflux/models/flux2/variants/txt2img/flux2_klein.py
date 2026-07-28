@@ -58,6 +58,7 @@ class Flux2Klein(nn.Module):
         scheduler: str = "flow_match_euler_discrete",
         pid_decode: bool = False,
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -72,6 +73,7 @@ class Flux2Klein(nn.Module):
             # Only PiD can finish denoising in pixel space; without it a shortened loop
             # would just hand the VAE an under-denoised latent.
             pid_skip_steps=pid_skip_steps if pid_decode else 0,
+            pid_resize=pid_resize if pid_decode else None,
         )
         # 1. Encode prompt(s)
         prompt_embeds, text_ids, negative_prompt_embeds, negative_text_ids = self._encode_prompt_pair(
@@ -128,7 +130,7 @@ class Flux2Klein(nn.Module):
         packed_latents = latents.reshape(latents.shape[0], latent_height, latent_width, latents.shape[-1]).transpose(0, 3, 1, 2)  # fmt: off
         if pid_decode:
             lq_latent = self.vae.unpack_packed_latents(packed_latents)
-            decoded = pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=config.pid_sigma)
+            decoded = pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=config.pid_sigma, resize=config.pid_resize)
         else:
             decoded = self.vae.decode_packed_latents(packed_latents)
         return ImageUtil.to_image(

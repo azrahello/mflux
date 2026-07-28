@@ -77,6 +77,7 @@ def main():
                 strict_caption_validation=args.strict_caption_validation,
                 pid_decode=args.pid_decode,
                 pid_skip_steps=args.pid_skip_steps,
+                pid_resize=args.pid_resize,
             )
             image.save(path=args.output.format(seed=seed), export_json_metadata=args.metadata)
     except (StopImageGenerationException, PromptFileReadError) as exc:

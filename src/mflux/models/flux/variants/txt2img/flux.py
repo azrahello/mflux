@@ -60,6 +60,7 @@ class Flux1(nn.Module):
         negative_prompt: str | None = None,
         pid_decode: bool = False,
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ) -> GeneratedImage:
         # 0. Create a new config based on the model type and input parameters
         config = Config(
@@ -74,6 +75,7 @@ class Flux1(nn.Module):
             # Only PiD can finish denoising in pixel space; without it a shortened loop
             # would just hand the VAE an under-denoised latent.
             pid_skip_steps=pid_skip_steps if pid_decode else 0,
+            pid_resize=pid_resize if pid_decode else None,
         )
 
         # 1. Create the initial latents
@@ -139,7 +141,7 @@ class Flux1(nn.Module):
         # 8. Decode the latent array and return the image
         latents = FluxLatentCreator.unpack_latents(latents=latents, height=config.height, width=config.width)
         if pid_decode:
-            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma)
+            decoded = pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma, resize=config.pid_resize)
         else:
             decoded = VAEUtil.decode(vae=self.vae, latent=latents, tiling_config=self.tiling_config)
         return ImageUtil.to_image(

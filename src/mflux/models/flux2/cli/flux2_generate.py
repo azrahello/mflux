@@ -67,6 +67,7 @@ def main():
                 scheduler="flow_match_euler_discrete",
                 pid_decode=args.pid_decode,
                 pid_skip_steps=args.pid_skip_steps,
+                pid_resize=args.pid_resize,
             )
             ImageUtil.save_image(
                 image=image,

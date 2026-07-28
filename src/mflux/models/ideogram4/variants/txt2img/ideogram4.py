@@ -56,6 +56,7 @@ class Ideogram4(nn.Module):
         warn_on_caption_issues: bool = True,
         pid_decode: bool = False,
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ) -> GeneratedImage:
         prompt = Ideogram4PromptEncoder.resolve_prompt(
             prompt,
@@ -83,6 +84,7 @@ class Ideogram4(nn.Module):
             # Only PiD can finish denoising in pixel space; without it a shortened loop
             # would just hand the VAE an under-denoised latent.
             pid_skip_steps=pid_skip_steps if pid_decode else 0,
+            pid_resize=pid_resize if pid_decode else None,
         )
 
         inputs = Ideogram4PromptEncoder.build_inputs(
@@ -178,7 +180,7 @@ class Ideogram4(nn.Module):
     ) -> mx.array:
         latents = Ideogram4LatentCreator.unpack_latents(z, config.height, config.width)
         if pid_decode:
-            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma)
+            return pid_decode_latents(vae=self.vae, latent=latents, caption=prompt, seed=seed, sigma=config.pid_sigma, resize=config.pid_resize)
         return self.vae.decode(latents)
 
     @staticmethod

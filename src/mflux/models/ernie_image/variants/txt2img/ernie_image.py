@@ -58,6 +58,7 @@ class ErnieImage(nn.Module):
         negative_prompt: str | None = None,
         pid_decode: bool = False,
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ) -> Image.Image:
         if scheduler is None:
             scheduler = "linear"
@@ -74,6 +75,7 @@ class ErnieImage(nn.Module):
             # Only PiD can finish denoising in pixel space; without it a shortened loop
             # would just hand the VAE an under-denoised latent.
             pid_skip_steps=pid_skip_steps if pid_decode else 0,
+            pid_resize=pid_resize if pid_decode else None,
         )
 
         latents = self._prepare_latents(seed=seed, config=config)
@@ -115,7 +117,7 @@ class ErnieImage(nn.Module):
         predict = None
         ctx.after_loop(latents)
 
-        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode, sigma=config.pid_sigma)
+        decoded = self._decode_latents(latents=latents, prompt=prompt, seed=seed, pid_decode=pid_decode, sigma=config.pid_sigma, resize=config.pid_resize)
         return ImageUtil.to_image(
             decoded_latents=decoded,
             config=config,
@@ -175,11 +177,11 @@ class ErnieImage(nn.Module):
         return text_bth, text_lens
 
     def _decode_latents(
-        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0
+        self, *, latents: mx.array, prompt: str, seed: int, pid_decode: bool = False, sigma: float = 0.0, resize: int | None = None
     ) -> mx.array:
         if pid_decode:
             lq_latent = self.vae.unpack_packed_latents(latents)
-            return pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=sigma)
+            return pid_decode_latents(vae=self.vae, latent=lq_latent, caption=prompt, seed=seed, sigma=sigma, resize=resize)
         return self.vae.decode_packed_latents(latents, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

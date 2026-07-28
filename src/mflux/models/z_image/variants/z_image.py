@@ -59,6 +59,7 @@ class ZImage(nn.Module):
         negative_prompt: str | None = None,
         pid_decode: bool = False,
         pid_skip_steps: int = 0,
+        pid_resize: int | None = None,
     ) -> Image.Image:
         supports_guidance = bool(self.model_config.supports_guidance)
         if not supports_guidance:
@@ -80,6 +81,7 @@ class ZImage(nn.Module):
             # Only PiD can finish denoising in pixel space; without it a shortened loop
             # would just hand the VAE an under-denoised latent.
             pid_skip_steps=pid_skip_steps if pid_decode else 0,
+            pid_resize=pid_resize if pid_decode else None,
         )
         # 1. Create the initial latents
         latents = LatentCreator.create_for_txt2img_or_img2img(
@@ -186,7 +188,7 @@ class ZImage(nn.Module):
     ) -> mx.array:
         unpacked = ZImageLatentCreator.unpack_latents(latents, config.height, config.width)
         if pid_decode:
-            return pid_decode_latents(vae=self.vae, latent=unpacked, caption=prompt, seed=seed, sigma=config.pid_sigma)
+            return pid_decode_latents(vae=self.vae, latent=unpacked, caption=prompt, seed=seed, sigma=config.pid_sigma, resize=config.pid_resize)
         return VAEUtil.decode(vae=self.vae, latent=unpacked, tiling_config=self.tiling_config)
 
     def save_model(self, base_path: str) -> None:

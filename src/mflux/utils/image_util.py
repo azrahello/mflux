@@ -56,9 +56,7 @@ class ImageUtil:
         negative_prompt: str | None = None,
         init_metadata: dict | None = None,
     ) -> GeneratedImage:
-        normalized = ImageUtil._denormalize(decoded_latents)
-        normalized_numpy = ImageUtil._to_numpy(normalized)
-        image = ImageUtil._numpy_to_pil(normalized_numpy)
+        image = ImageUtil.to_pil(decoded_latents)
         return GeneratedImage(
             image=image,
             model_config=config.model_config,
@@ -98,6 +96,11 @@ class ImageUtil:
             composite_img.paste(gen_img.image, (current_x, 0))
             current_x += gen_img.image.width
         return composite_img
+
+    @staticmethod
+    def to_pil(decoded_latents: mx.array) -> PIL.Image.Image:
+        """A decoder's raw [-1, 1] output as a PIL image, without GeneratedImage's metadata."""
+        return ImageUtil._numpy_to_pil(ImageUtil._to_numpy(ImageUtil._denormalize(decoded_latents)))
 
     @staticmethod
     def _denormalize(images: mx.array) -> mx.array:

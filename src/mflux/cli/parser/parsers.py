@@ -173,6 +173,7 @@ class CommandLineParser(argparse.ArgumentParser):
 
     def add_pid_decode_arguments(self) -> None:
         self.add_argument("--pid-decode", action="store_true", help="Decode with NVIDIA PiD's pixel-diffusion super-resolving decoder instead of the standard VAE. First run downloads two separate Hugging Face checkpoints (~8GB total); google/gemma-2-2b-it is gated and requires accepting its license + `hf auth login`.")
+        self.add_argument("--pid-resize", type=int, default=None, help="With --pid-decode, resize the generated image to this long side (px) before handing it to PiD, so the output is 4x this instead of 4x the generation size. Lets you generate at a resolution the base model is good at and still land on the final size you want: --width 832 --height 1248 --pid-resize 768 gives 2048x3072. The released checkpoints super-resolve 2k->4k, so this must be 512-1024; values are rounded to a multiple of 8. Ignored without --pid-decode.")
         self.add_argument("--pid-skip-steps", type=int, default=0, help="With --pid-decode, stop the diffusion loop this many steps early and let PiD finish denoising in pixel space. The PiD paper reports the last 3-5 steps of a 28-50 step schedule are better skipped than run (Fig. 8); on short turbo schedules each skipped step is a much bigger jump, so start at 1. Ignored without --pid-decode.")
 
     def add_output_arguments(self) -> None:
