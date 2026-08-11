@@ -32,6 +32,7 @@ class Ideogram4(nn.Module):
         model_config: ModelConfig = ModelConfig.ideogram4_fp8(),
         lora_paths: list[str] | None = None,
         lora_scales: list[float] | None = None,
+        bake_lora: bool = True,
     ):
         super().__init__()
         Ideogram4Initializer.init(
@@ -41,6 +42,7 @@ class Ideogram4(nn.Module):
             model_config=model_config,
             lora_paths=lora_paths,
             lora_scales=lora_scales,
+            bake_lora=bake_lora,
         )
 
     def generate_image(

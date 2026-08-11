@@ -7,6 +7,7 @@ import mlx.core as mx
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.models.common.config import ModelConfig
 from mflux.models.common.lora.mapping.lora_loader import LoRALoader
+from mflux.models.common.lora.mapping.lora_saver import LoRASaver
 from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.common.tokenizer import TokenizerLoader
 from mflux.models.common.weights.loading.loaded_weights import LoadedWeights
@@ -27,6 +28,7 @@ class Ideogram4Initializer:
         model_path: str | None = None,
         lora_paths: list[str] | None = None,
         lora_scales: list[float] | None = None,
+        bake_lora: bool = True,
     ) -> None:
         path = model_path if model_path else model_config.model_name
         root_path = Ideogram4Initializer._resolve_model_path(path)
@@ -38,7 +40,7 @@ class Ideogram4Initializer:
         del weights
         mx.eval(model)
         mx.clear_cache()
-        Ideogram4Initializer._apply_lora(model, lora_paths, lora_scales)
+        Ideogram4Initializer._apply_lora(model, lora_paths, lora_scales, bake_lora)
 
     @staticmethod
     def _resolve_model_path(path: str) -> Path:
@@ -105,13 +107,16 @@ class Ideogram4Initializer:
         )
 
     @staticmethod
-    def _apply_lora(model, lora_paths: list[str] | None, lora_scales: list[float] | None) -> None:
+    def _apply_lora(
+        model, lora_paths: list[str] | None, lora_scales: list[float] | None, bake_lora: bool = True
+    ) -> None:
         lora_mapping = Ideogram4LoRAMapping.get_mapping()
         model.lora_paths, model.lora_scales = LoRALoader.load_and_apply_lora(
             lora_mapping=lora_mapping,
             transformer=model.conditional_transformer,
             lora_paths=lora_paths,
             lora_scales=lora_scales,
+            bake_lora=bake_lora,
         )
         if not model.lora_paths:
             return
@@ -123,6 +128,11 @@ class Ideogram4Initializer:
                 lora_mapping,
                 role=None,
             )
+        # The conditional branch is baked inside load_and_apply_lora; bake the unconditional one too
+        # so both transformers stay in the same state (and a saved model carries the merged weights).
+        if bake_lora:
+            LoRASaver.bake_and_strip_lora(model.unconditional_transformer)
+            mx.eval(model.unconditional_transformer.parameters())
 
     @staticmethod
     def _text_encoder_kwargs(directory: Path) -> dict[str, Any]:
