@@ -68,11 +68,14 @@ class LoKrLinear(nn.Module):
     def delta_matmul(self, x: mx.array) -> mx.array:
         if self.dora_scale is None and self.can_use_factorized_matmul():
             return self.lokr_matmul(x)
-        return mx.matmul(x, self.delta_weight().T)
+        return mx.matmul(x, self.delta_weight().T.astype(x.dtype))
 
     def lokr_matmul(self, x: mx.array) -> mx.array:
-        w1 = self.lokr_w1
-        w2 = self.lokr_w2
+        # Factors stay float32 as master weights, but the matmuls run in the activation
+        # dtype -- otherwise the delta promotes the layer output to float32 (see
+        # LoRALinear.__call__).
+        w1 = self.lokr_w1.astype(x.dtype)
+        w2 = self.lokr_w2.astype(x.dtype)
         in_m = w1.shape[1]
         prefix_shape = x.shape[:-1]
         in_n = x.shape[-1] // in_m

@@ -49,5 +49,10 @@ class LoRALinear(nn.Module):
 
     def __call__(self, x):
         base_out = self.linear(x)
-        lora_out = mx.matmul(mx.matmul(x, self.lora_A), self.lora_B)
+        # The factors stay float32 as master weights (fp16 LoRA params underflow the
+        # gradient at typical learning rates), but the matmuls must run in the activation
+        # dtype: fp16 @ fp32 promotes to fp32, and since every patched layer feeds the
+        # next block, one un-cast factor drags the whole transformer to fp32 and silently
+        # cancels --dtype. Casting (in_dims, r) is free next to the base GEMM.
+        lora_out = mx.matmul(mx.matmul(x, self.lora_A.astype(x.dtype)), self.lora_B.astype(x.dtype))
         return base_out + self.scale * lora_out

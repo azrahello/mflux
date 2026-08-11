@@ -30,7 +30,11 @@ class FusedLoRALinear(nn.Module):
         lora_out = mx.zeros_like(base_out)
         for lora in self.loras:
             if isinstance(lora, LoRALinear):
-                lora_out += lora.scale * mx.matmul(mx.matmul(x, lora.lora_A), lora.lora_B)
+                # Factors are float32 master weights; run the matmuls in the activation
+                # dtype (see LoRALinear.__call__) so stacked adapters don't promote the
+                # output to float32 and cancel --dtype for the rest of the network.
+                a, b = lora.lora_A.astype(x.dtype), lora.lora_B.astype(x.dtype)
+                lora_out += lora.scale * mx.matmul(mx.matmul(x, a), b)
             elif isinstance(lora, LoKrLinear):
                 lora_out += lora.scale * lora.delta_matmul(x)
 
