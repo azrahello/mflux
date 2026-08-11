@@ -22,6 +22,7 @@ class Krea2LoRAMapping(LoRAMapping):
             Krea2LoRAMapping._target("txtmlp.linear_out", aliases=["txtmlp.3", "txt_in.linear_2"]),
             Krea2LoRAMapping._target("txtfusion.projector", aliases=["text_fusion.projector"]),
             Krea2LoRAMapping._target("last.linear", aliases=["final_layer.linear"]),
+            Krea2LoRAMapping._target("last.modulation.lin", aliases=["final_layer.scale_shift_table"]),
         ]
 
     @staticmethod

@@ -19,6 +19,8 @@ MODEL_CHOICES = [
     "dev-krea",
     "krea-2",
     "krea2",
+    "krea-2-raw",
+    "krea2-raw",
     "qwen",
     "fibo",
     "fibo-lite",

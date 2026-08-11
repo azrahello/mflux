@@ -373,8 +373,24 @@ class LoRALoader:
         is_lora_linear = isinstance(current_module, LoRALinear)
         is_lokr_linear = isinstance(current_module, LoKrLinear)
         is_fused_linear = isinstance(current_module, FusedLoRALinear)
+        is_raw_param = isinstance(current_module, mx.array)
 
-        if is_linear or is_lora_linear or is_lokr_linear or is_fused_linear:
+        if is_raw_param:
+            # Some targets (e.g. Krea 2's last.modulation.lin scale-shift table) are a
+            # bare learnable tensor added directly into the forward pass, not an
+            # nn.Linear weight -- there's no module to wrap in a live LoRALinear, so
+            # bake the low-rank delta straight into the tensor.
+            lora_B_scaled = lora_B * alpha_scale if "alpha" in lora_data else lora_B
+            delta = mx.transpose(mx.matmul(lora_A, lora_B_scaled)) * effective_scale
+            if delta.shape != current_module.shape:
+                print(
+                    f"❌ Shape mismatch applying raw LoRA delta at {target_path}: "
+                    f"{current_module.shape} vs {delta.shape}"
+                )
+                return False
+            LoRALoader._replace_target_module(transformer, target_path, current_module + delta)
+            return True
+        elif is_linear or is_lora_linear or is_lokr_linear or is_fused_linear:
             # Handle fusion: if the current module is already a LoRA layer, fuse them
             if is_lora_linear or is_lokr_linear:
                 print(f"   🔀 Fusing with existing LoRA at {target_path}")
