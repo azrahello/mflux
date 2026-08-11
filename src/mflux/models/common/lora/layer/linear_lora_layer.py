@@ -41,11 +41,11 @@ class LoRALinear(nn.Module):
             high=scale,
             shape=(input_dims, r),
         )
-        self.lora_B = mx.random.uniform(
-            low=-scale,
-            high=scale,
-            shape=(r, output_dims),
-        )
+        # B starts at zero so ΔW = A @ B is zero at init and training begins from the exact
+        # base model. Random B injects a rank-r perturbation into every patched layer that the
+        # optimizer has to undo first — it grows with rank and compounds across blocks.
+        # (Loading a saved adapter overwrites both factors, so this only affects fresh training.)
+        self.lora_B = mx.zeros((r, output_dims))
 
     def __call__(self, x):
         base_out = self.linear(x)
