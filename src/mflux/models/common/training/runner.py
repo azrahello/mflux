@@ -107,7 +107,10 @@ class TrainingRunner:
         if training_spec.low_ram:
             model = adapter.model()
             if hasattr(model, "tiling_config") and model.tiling_config is None:
-                model.tiling_config = TilingConfig()
+                # Never tile the dataset encode: it runs once per image, in isolation, so it is
+                # not the memory bottleneck — the training step is. Tiling it only bakes the
+                # VAE's tile-seam artifacts into the cached target latents, which the LoRA then learns.
+                model.tiling_config = TilingConfig(vae_encode_tiled=False)
 
         # For Turbo models we always apply the assistant training adapter (automatic, no config needed).
         if is_zimage_turbo:
@@ -120,6 +123,19 @@ class TrainingRunner:
                 path=TrainingRunner.KREA2_TURBO_TRAINING_ADAPTER,
                 scale=1.0,
             )
+
+        # Say out loud which branch we took. A distilled checkpoint trained without its assistant
+        # adapter degrades silently — same shapes, no error, you only see it in the images — and
+        # the only thing selecting the branch is the `model` label in the config.
+        assistant = is_zimage_turbo or is_krea2_turbo
+        print(
+            f"[mflux] training '{model_config.model_name}' — "
+            + (
+                "assistant adapter loaded (distilled checkpoint)"
+                if assistant
+                else "no assistant adapter (base checkpoint)"
+            )
+        )
 
         # Apply LoRA layers either by loading a saved adapter (resume) or by injecting fresh layers
         if training_spec.lora_layers.state_path is not None:
