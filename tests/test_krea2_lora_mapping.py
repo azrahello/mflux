@@ -195,6 +195,35 @@ class TestKrea2LoRAMapping:
         assert mx.allclose(wo_after, wo_before + 0.8 * wo_diff, atol=1e-5).item()
         assert mx.allclose(down_after, down_before + 0.8 * down_diff, atol=1e-5).item()
 
+    def test_applies_raw_parameter_lora_to_transformer(self, tmp_path):
+        # Reproduces ai-toolkit-trained Krea 2 Turbo LoRAs: last.modulation.lin has no
+        # nn.Linear behind it (SimpleModulation adds the tensor directly, no matmul),
+        # so the low-rank delta must be baked straight into the raw parameter.
+        transformer = _tiny_transformer()
+        lora_path = tmp_path / "raw_param_lora.safetensors"
+        lora_A = mx.ones((2, 32))
+        lora_B = mx.ones((2, 2))
+        mx.save_safetensors(
+            str(lora_path),
+            {
+                "diffusion_model.last.modulation.lin.lora_A.weight": lora_A,
+                "diffusion_model.last.modulation.lin.lora_B.weight": lora_B,
+            },
+        )
+        base = transformer.last.modulation.lin
+
+        lora_paths, _ = LoRALoader.load_and_apply_lora(
+            lora_mapping=Krea2LoRAMapping.get_mapping(),
+            transformer=transformer,
+            lora_paths=[str(lora_path)],
+            lora_scales=[0.5],
+            bake_lora=True,
+        )
+
+        assert lora_paths == [str(lora_path)]
+        expected_delta = mx.transpose(mx.matmul(mx.transpose(lora_A), mx.transpose(lora_B))) * 0.5
+        assert mx.allclose(transformer.last.modulation.lin, base + expected_delta, atol=1e-5).item()
+
     def _matched_keys(self, keys: list[str]) -> set[str]:
         matched_keys: set[str] = set()
         for key in keys:
