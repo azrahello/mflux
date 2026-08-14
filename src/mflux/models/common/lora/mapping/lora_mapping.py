@@ -14,6 +14,7 @@ class LoRATarget:
     possible_lokr_w1_patterns: List[str] = field(default_factory=list)
     possible_lokr_w2_patterns: List[str] = field(default_factory=list)
     possible_dora_scale_patterns: List[str] = field(default_factory=list)
+    possible_diff_patterns: List[str] = field(default_factory=list)
     up_transform: Callable[[mx.array], mx.array] | None = None
     down_transform: Callable[[mx.array], mx.array] | None = None
     lokr_w1_transform: Callable[[mx.array], mx.array] | None = None

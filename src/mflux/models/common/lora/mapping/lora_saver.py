@@ -314,16 +314,23 @@ class LoRASaver:
                     # reconstructs mixed saves from the stored shapes.
                     if upgraded is not None:
                         upgraded.append(path or "?")
-                    return LoRASaver._quantize_dense(merged, bias, group_size=64, bits=8)
-                return LoRASaver._quantize_dense(
-                    merged,
-                    bias,
-                    group_size=base_linear.group_size,
-                    bits=base_linear.bits,
-                    mode=base_linear.mode,
-                )
+                    quantized = LoRASaver._quantize_dense(merged, bias, group_size=64, bits=8)
+                else:
+                    quantized = LoRASaver._quantize_dense(
+                        merged,
+                        bias,
+                        group_size=base_linear.group_size,
+                        bits=base_linear.bits,
+                        mode=base_linear.mode,
+                    )
+                # Materialize per layer so each old weight (and the dense
+                # intermediates) frees before the next bake, instead of every
+                # layer's old+new weights coexisting in one deferred eval.
+                mx.eval(quantized.parameters())
+                return quantized
 
             base_linear.weight = merged.astype(base_linear.weight.dtype)
+            mx.eval(base_linear.weight)
             return base_linear
         except Exception as e:
             raise RuntimeError(f"Failed to bake a LoRA into {type(base_linear).__name__}{at}: {e}") from e
