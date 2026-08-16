@@ -319,7 +319,7 @@ class TrainingTrainer:
                 prompt=prompt,
                 width=preview_width,
                 height=preview_height,
-                steps=training_spec.steps,
+                steps=training_spec.steps if training_spec.preview_steps is None else training_spec.preview_steps,
                 image_paths=image_paths,
             )
             preview_name = preview_names[idx] if idx < len(preview_names) else None

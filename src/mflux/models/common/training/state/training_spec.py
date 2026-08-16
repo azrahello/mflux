@@ -265,6 +265,11 @@ class TrainingSpec:
     # memory of roughly "weights + two blocks" instead of "weights + every block"; this is what
     # makes edit training fit on 32-36 GB machines.
     gradient_checkpointing: bool = False
+    # Steps used for the monitoring previews only. 'steps' sizes the sigma grid the training
+    # samples timesteps from, so a distilled model trained through an assistant adapter wants
+    # it large (ai-toolkit trains Krea 2 Turbo over 1000 levels) while its previews still want
+    # the model's native step count. None = use 'steps' for both.
+    preview_steps: int | None = None
 
     @staticmethod
     def resolve(
@@ -296,6 +301,11 @@ class TrainingSpec:
         guidance = 0.0 if guidance_raw is None else float(guidance_raw)
         quantize_raw = config.get("quantize", None)
         quantize = None if quantize_raw is None else int(quantize_raw)
+
+        preview_steps_raw = config.get("preview_steps", None)
+        preview_steps = None if preview_steps_raw is None else int(preview_steps_raw)
+        if preview_steps is not None and preview_steps <= 0:
+            raise ValueError("'preview_steps' must be > 0")
 
         max_resolution_raw = config.get("max_resolution", None)
         max_resolution = None if max_resolution_raw is None else int(max_resolution_raw)
@@ -470,6 +480,7 @@ class TrainingSpec:
             low_ram=low_ram,
             cache_limit_gb=cache_limit_gb,
             gradient_checkpointing=gradient_checkpointing,
+            preview_steps=preview_steps,
         )
 
     @staticmethod
