@@ -37,11 +37,17 @@ class TrainingTrainer:
         span = high - low
         if span <= 0:
             return low
+        # frac is a position on the *index* axis, and the sigma schedule descends: index 0 is
+        # sigma ~1 (pure noise) and the last index is the smallest sigma (nearly clean). So
+        # frac -> 0 means high noise and frac -> 1 means low noise.
+        # Cubic sampling and the content/style split follow ai-toolkit (BaseSDTrainProcess,
+        # content_or_style) and T2I-Adapter section 3.4: structure is learned at high noise,
+        # texture at low noise. Do not "fix" these two by swapping them - they match upstream.
         if timestep_type == "sigmoid":  # mid-concentrated (ai-toolkit default; best for identity)
             frac = 1.0 / (1.0 + math.exp(-rng.gauss(0.0, 1.0)))
-        elif timestep_type == "content":  # cubic, favors low noise (fine detail)
+        elif timestep_type == "content":  # cubic, favors high noise (structure, composition)
             frac = rng.random() ** 3
-        elif timestep_type == "style":  # favors high noise (coarse style)
+        elif timestep_type == "style":  # favors low noise (fine detail, texture)
             frac = 1.0 - rng.random() ** 3
         else:
             frac = rng.random()
