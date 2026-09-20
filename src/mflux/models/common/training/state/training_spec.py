@@ -159,7 +159,7 @@ class MonitoringSpec:
     preview_width: int = 1024
     preview_height: int = 1024
     preview_images: list[Path] | None = None
-    smooth_loss: bool = False
+    smooth_loss: bool = True
     smooth_loss_window: int = 5
 
     @staticmethod
@@ -215,7 +215,7 @@ class MonitoringSpec:
         if generate_image_frequency <= 0:
             raise ValueError("Monitoring generate_image_frequency must be > 0")
 
-        smooth_loss = bool(param.get("smooth_loss", False))
+        smooth_loss = bool(param.get("smooth_loss", True))
         smooth_loss_window = int(param.get("smooth_loss_window", 5))
         if smooth_loss and smooth_loss_window < 2:
             raise ValueError("Monitoring smooth_loss_window must be >= 2 when smooth_loss is enabled.")

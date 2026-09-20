@@ -1,4 +1,6 @@
+import datetime
 import json
+import statistics
 from pathlib import Path
 
 from mflux.models.common.training.state.training_spec import TrainingSpec
@@ -10,6 +12,13 @@ from mflux.models.common.training.state.training_state import (
 
 
 class Plotter:
+    # X axis focus: recent minutes get more width than old ones. Tau (minutes) sets how
+    # hard the old part is squeezed and is adjustable from the page. The axis measures
+    # training time, not wall clock: a gap this many times the typical step (stopped and
+    # resumed hours later) counts as one step instead of the hours it really took.
+    FOCUS_TAU_MINUTES = 5.0
+    FOCUS_GAP_FACTOR = 3.0
+
     @staticmethod
     def update_loss_plot(training_spec: TrainingSpec, training_state: TrainingState, target_loss: float = 0.3) -> None:
         stats = training_state.statistics
@@ -51,6 +60,14 @@ class Plotter:
             if preview_zero.exists():
                 preview_step_to_src[0] = (preview_rel_root / preview_zero.name).as_posix()
 
+        axis_steps, axis_elapsed = Plotter._axis_timeline(
+            sorted(
+                {
+                    **dict(zip(batch_steps, stats.batch_times)),
+                    **dict(zip(steps, stats.times)),
+                }.items()
+            )
+        )
         preview_steps = sorted(preview_step_to_src.keys())
         loss_by_step = {int(step): float(loss) for step, loss in zip(steps, losses)}
         smoothed = Plotter._smooth_losses(losses, smooth_window)
@@ -67,11 +84,31 @@ class Plotter:
             "lossByStep": loss_by_step,
             "padding": padding,
             "totalStep": total_step,
+            "axisSteps": axis_steps,
+            "axisElapsed": axis_elapsed,
+            "focusTau": Plotter.FOCUS_TAU_MINUTES,
         }
         html = Plotter._build_html(data)
         path = training_state.get_current_loss_plot_path(training_spec)
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
+
+    @staticmethod
+    def _axis_timeline(pairs: list[tuple[int, datetime.datetime]]) -> tuple[list[int], list[float]]:
+        """Minutes of training per step: a pause between runs collapses to one typical step."""
+        axis_steps = [step for step, _ in pairs]
+        if len(axis_steps) < 2:
+            return axis_steps, [0.0] * len(axis_steps)
+
+        deltas = [max((b - a).total_seconds() / 60.0, 0.0) for (_, a), (_, b) in zip(pairs, pairs[1:])]
+        cap = statistics.median(deltas) * Plotter.FOCUS_GAP_FACTOR
+        elapsed = [0.0]
+        for minutes in deltas:
+            elapsed.append(elapsed[-1] + min(minutes, cap))
+
+        if elapsed[-1] <= 0:
+            return axis_steps, [float(i) for i in range(len(axis_steps))]
+        return axis_steps, elapsed
 
     @staticmethod
     def _smooth_losses(values: list[float], window: int) -> list[float]:
@@ -146,6 +183,11 @@ class Plotter:
         display: flex;
         align-items: center;
         gap: 10px;
+      }}
+      #focus-tau {{
+        width: 84px;
+        accent-color: #7BA4E8;
+        cursor: pointer;
       }}
       .toggle {{
         position: relative;
@@ -304,6 +346,14 @@ class Plotter:
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div class="control-row" id="focus-control">
+            <span id="focus-label">Focus</span>
+            <input type="range" id="focus-tau" min="1" max="60" step="1" />
+            <label class="toggle">
+              <input type="checkbox" id="toggle-focus" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           <div class="control-row" id="batch-control">
             <span>Batch</span>
             <label class="toggle">
@@ -331,6 +381,10 @@ class Plotter:
       const smoothControl = document.getElementById('smooth-control');
       const batchToggle = document.getElementById('toggle-batch');
       const batchControl = document.getElementById('batch-control');
+      const focusToggle = document.getElementById('toggle-focus');
+      const focusControl = document.getElementById('focus-control');
+      const focusSlider = document.getElementById('focus-tau');
+      const focusLabel = document.getElementById('focus-label');
       const popover = document.getElementById('popover');
       function buildPopoverHTML(step, loss, src) {{
         const img = src ? '<img src="' + src + '" alt="" />' : '';
@@ -349,7 +403,7 @@ class Plotter:
       const smoothed = data.smoothed || [];
       const smoothEnabled = data.smoothEnabled || false;
       let showSmoothed = smoothEnabled;
-      let showLoss = true;
+      let showLoss = !smoothEnabled;
       let showBatch = true;
       const previewMapAll = data.previewMap || {{}};
       const lossByStep = data.lossByStep || {{}};
@@ -389,9 +443,75 @@ class Plotter:
         draw();
       }}
 
+      const axisSteps = data.axisSteps || [];
+      const axisElapsed = data.axisElapsed || [];
+      let focusMode = axisSteps.length > 2;
+      let focusTau = data.focusTau || 5;
+      let axisPositions = [];
+
+      // Log scale on age: the smaller tau, the more width the last minutes get.
+      function rebuildAxisPositions() {{
+        const total = axisElapsed.length ? axisElapsed[axisElapsed.length - 1] : 0;
+        if (total <= 0) {{
+          axisPositions = axisElapsed.map((_, i) => (axisElapsed.length > 1 ? i / (axisElapsed.length - 1) : 0));
+          return;
+        }}
+        const denominator = Math.log1p(total / focusTau);
+        axisPositions = axisElapsed.map((value) => 1 - Math.log1p((total - value) / focusTau) / denominator);
+      }}
+      rebuildAxisPositions();
+
+      // Linear lookup on a monotonic table; also used inverted to label the warped axis.
+      function interpolate(xs, ys, x) {{
+        if (!xs.length) return 0;
+        const last = xs.length - 1;
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[last]) return ys[last];
+        let lo = 0;
+        let hi = last;
+        while (hi - lo > 1) {{
+          const mid = (lo + hi) >> 1;
+          if (xs[mid] <= x) lo = mid;
+          else hi = mid;
+        }}
+        const span = xs[hi] - xs[lo];
+        return span === 0 ? ys[lo] : ys[lo] + ((ys[hi] - ys[lo]) * (x - xs[lo])) / span;
+      }}
+
       function scaleX(step, minStep, maxStep, width) {{
         if (maxStep === minStep) return margin.left + width / 2;
-        return margin.left + ((step - minStep) / (maxStep - minStep)) * width;
+        const span = maxStep - minStep;
+        if (!focusMode) return margin.left + ((step - minStep) / span) * width;
+        const dataMax = axisSteps[axisSteps.length - 1];
+        const dataFraction = (dataMax - minStep) / span;
+        const unit = step <= dataMax
+          ? interpolate(axisSteps, axisPositions, step) * dataFraction
+          : dataFraction + (step - dataMax) / span;
+        return margin.left + unit * width;
+      }}
+
+      function xTickValues(minStep, maxStep, count) {{
+        if (!focusMode) {{
+          const step = niceStep(Math.max(1, maxStep - minStep), count, true);
+          const values = [];
+          for (let value = Math.ceil(minStep / step) * step; value <= Math.floor(maxStep / step) * step; value += step) {{
+            values.push(value);
+          }}
+          return values;
+        }}
+        // Evenly spaced in pixels, so the labels come out uneven in steps: that is the point.
+        const grain = niceStep(Math.max(1, (maxStep - minStep) / 60), 1, true);
+        const values = [];
+        let previous = null;
+        for (let i = 0; i <= count; i++) {{
+          const raw = interpolate(axisPositions, axisSteps, i / count);
+          const value = Math.max(minStep, Math.round(raw / grain) * grain);
+          if (previous === null || value > previous) {{
+            values.push(value);
+            previous = value;
+          }}
+        }}
+        return values;
       }}
 
       function scaleY(value, minY, maxY, height) {{
@@ -416,14 +536,11 @@ class Plotter:
         ctx.lineWidth = 1;
         const xTicks = 7;
         const yTicks = 5;
-        const xRange = Math.max(1, maxStep - minStep);
         const yRange = Math.max(0.0001, maxY - minY);
-        const xStep = niceStep(xRange, xTicks, true);
         const yStep = niceStep(yRange, yTicks, false);
 
-        const xStart = Math.ceil(minStep / xStep) * xStep;
-        const xEnd = Math.floor(maxStep / xStep) * xStep;
-        for (let xVal = xStart; xVal <= xEnd; xVal += xStep) {{
+        const xValues = xTickValues(minStep, maxStep, xTicks);
+        for (const xVal of xValues) {{
           const x = scaleX(xVal, minStep, maxStep, width);
           ctx.beginPath();
           ctx.moveTo(x, margin.top);
@@ -453,7 +570,7 @@ class Plotter:
         ctx.textBaseline = 'top';
         ctx.font = '600 14px Inter, ui-sans-serif, system-ui';
         ctx.fillText('Steps', margin.left + width / 2, margin.top + height + 48);
-        for (let xVal = xStart; xVal <= xEnd; xVal += xStep) {{
+        for (const xVal of xValues) {{
           const x = scaleX(xVal, minStep, maxStep, width);
           ctx.font = '12px Inter, ui-sans-serif, system-ui';
           ctx.fillText(String(xVal), x, margin.top + height + 18);
@@ -744,6 +861,31 @@ class Plotter:
           draw();
         }});
       }}
+      if (focusControl) {{
+        focusControl.style.display = axisSteps.length > 2 ? 'flex' : 'none';
+      }}
+      function updateFocusLabel() {{
+        if (focusLabel) focusLabel.textContent = focusMode ? 'Focus ' + focusTau + 'm' : 'Focus';
+        if (focusSlider) focusSlider.style.opacity = focusMode ? '1' : '0.35';
+      }}
+      if (focusToggle) {{
+        focusToggle.checked = focusMode;
+        focusToggle.addEventListener('change', () => {{
+          focusMode = focusToggle.checked;
+          updateFocusLabel();
+          draw();
+        }});
+      }}
+      if (focusSlider) {{
+        focusSlider.value = String(focusTau);
+        focusSlider.addEventListener('input', () => {{
+          focusTau = Number(focusSlider.value);
+          rebuildAxisPositions();
+          updateFocusLabel();
+          draw();
+        }});
+      }}
+      updateFocusLabel();
       window.addEventListener('resize', resize);
       resize();
     </script>
