@@ -254,3 +254,17 @@ def test_state_restoration_after_exhaustion(dataset, batch_size):
 
     with pytest.raises(StopIteration):
         next(restored_iterator)
+
+
+@pytest.mark.fast
+def test_validation_batch_is_fixed_across_steps():
+    # The batch-loss curve is only readable if every tick measures the same thing.
+    iterator = Iterator(get_dataset(50), batch_size=2, seed=7)
+
+    iterator.num_iterations = 0
+    first = iterator.get_validation_batch()
+    iterator.num_iterations = 500
+    later = iterator.get_validation_batch()
+
+    assert [item.data_id for item in first.data] == [item.data_id for item in later.data]
+    assert first.rng.random() == later.rng.random()

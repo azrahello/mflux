@@ -134,9 +134,10 @@ class Iterator:
         data_items = self.dataset.data
         total = len(data_items)
         if total > 10:
-            # Deterministic sample without affecting training RNG.
+            # Same subset and same rng at every tick: the loss depends heavily on the
+            # sampled timestep, so re-drawing per tick measures the draw, not the progress.
             base_seed = self.seed or 0
-            validation_rng = random.Random(base_seed + 1337 + self.num_iterations)
+            validation_rng = random.Random(base_seed + 1337)
             indices = validation_rng.sample(range(total), k=10)
             data_items = [data_items[i] for i in indices]
         else:
