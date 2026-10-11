@@ -31,3 +31,5 @@ class Batch:
     def __init__(self, data: list[DataItem], rng: Random):
         self.rng = rng
         self.data = data
+        # (image_name, timestep index, sigma) per item, filled by the loss.
+        self.samples: list[tuple] = []

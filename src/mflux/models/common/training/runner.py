@@ -62,7 +62,9 @@ class TrainingRunner:
         )
 
     @staticmethod
-    def train(*, config_path: str | None, resume_path: str | None) -> tuple[TrainingAdapter, TrainingSpec]:
+    def train(
+        *, config_path: str | None, resume_path: str | None, verbose: bool = False
+    ) -> tuple[TrainingAdapter, TrainingSpec]:
         training_spec = TrainingSpec.resolve(config_path=config_path, resume_path=resume_path)
 
         # Bound MLX's buffer-cache pool for the whole run (encoding + train loop). Freed
@@ -211,7 +213,9 @@ class TrainingRunner:
         training_state = TrainingState(iterator=iterator, optimizer=optimizer, statistics=statistics)
 
         try:
-            TrainingTrainer.train(adapter=adapter, training_spec=training_spec, training_state=training_state)
+            TrainingTrainer.train(
+                adapter=adapter, training_spec=training_spec, training_state=training_state, verbose=verbose
+            )
             if is_zimage_turbo or is_krea2_turbo:
                 TrainingRunner._disable_assistant_loras(adapter.transformer())
             return adapter, training_spec

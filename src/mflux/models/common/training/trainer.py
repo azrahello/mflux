@@ -4,6 +4,7 @@ import gc
 import random
 import re
 import tempfile
+import time
 from pathlib import Path
 
 import mlx.core as mx
@@ -20,6 +21,7 @@ from mflux.models.common.training.dataset.batch import Batch, DataItem
 from mflux.models.common.training.state.training_spec import TrainingSpec
 from mflux.models.common.training.state.training_state import TrainingState
 from mflux.models.common.training.statistics.plotter import Plotter
+from mflux.models.common.training.statistics.verbose_log import VerboseLog
 from mflux.models.common.training.utils import TrainingUtil
 from mflux.utils.exif_orientation import oriented_size
 
@@ -61,7 +63,7 @@ class TrainingTrainer:
         batch: Batch,
     ) -> mx.float16:
         losses = [
-            TrainingTrainer._single_example_loss(adapter, training_spec, base_config, item, batch.rng)
+            TrainingTrainer._single_example_loss(adapter, training_spec, base_config, item, batch.rng, batch.samples)
             for item in batch.data
         ]
         return mx.mean(mx.array(losses))
@@ -73,6 +75,7 @@ class TrainingTrainer:
         base_config,
         item: DataItem,
         rng: random.Random,
+        samples: list | None = None,
     ) -> mx.float16:
         # Create a config matching this item's spatial dimensions.
         # Flux uses config.width/height for rotary embeddings, so this must match the latent layout.
@@ -131,6 +134,9 @@ class TrainingTrainer:
             config=config,
         )
 
+        if samples is not None:
+            samples.append((item.image_name, t, config.scheduler.sigmas[t]))
+
         error = (clean_image + predicted_noise - pure_noise).square()
         return error.mean()
 
@@ -140,6 +146,7 @@ class TrainingTrainer:
         adapter: TrainingAdapter,
         training_spec: TrainingSpec,
         training_state: TrainingState,
+        verbose: bool = False,
     ) -> None:
         first_preview = None
         if training_spec.monitoring is not None and training_spec.monitoring.preview_images:
@@ -156,6 +163,13 @@ class TrainingTrainer:
             adapter.set_gradient_checkpointing(True)
         # Krea 2 forces checkpointing on in freeze_base, so read the effective state back.
         gradient_checkpointing = bool(getattr(adapter.transformer(), "gradient_checkpointing", False))
+        if verbose:
+            VerboseLog.startup(
+                adapter=adapter,
+                training_spec=training_spec,
+                base_config=base_config,
+                gradient_checkpointing=gradient_checkpointing,
+            )
 
         train_step_function = nn.value_and_grad(
             model=adapter.model(),
@@ -163,7 +177,8 @@ class TrainingTrainer:
         )
 
         if training_spec.monitoring is not None and training_state.iterator.num_iterations == 0:
-            TrainingTrainer._generate_previews_with_optimizer_offload(adapter, training_spec, training_state)
+            if training_spec.monitoring.preview_start == 0:
+                TrainingTrainer._generate_previews_with_optimizer_offload(adapter, training_spec, training_state)
             validation_batch = training_state.iterator.get_validation_batch()
             validation_loss = TrainingTrainer.compute_loss(adapter, training_spec, base_config, validation_batch)
             training_state.statistics.append_batch_values(step=training_state.iterator.num_iterations, loss=float(validation_loss))  # fmt: off
@@ -182,13 +197,18 @@ class TrainingTrainer:
         accumulated_grads = None
         accumulated_count = 0
         nonfinite_skips = 0
+        activation_dtypes = VerboseLog.probe_activation_dtypes(adapter.transformer()) if verbose else None
         for batch in batches:
+            timings: dict[str, float] = {}
+            started = time.perf_counter()
             loss, grads = train_step_function(batch)
             if gradient_checkpointing:
                 TrainingTrainer._evaluate_backward_in_block_order(loss, grads)
             if not TrainingTrainer._step_is_finite(loss):
                 del loss, grads
                 nonfinite_skips += 1
+                if verbose:
+                    VerboseLog.nonfinite(step=training_state.iterator.num_iterations, batch=batch)
                 # Drop any partial accumulation window: a skipped micro-batch (especially on a
                 # window boundary) must not carry its accumulated grads into the next window,
                 # which would apply an oversized optimizer step.
@@ -204,6 +224,7 @@ class TrainingTrainer:
             # the optimizer on the window boundary, for an effective batch of batch_size *
             # accum_steps.
             at_step_boundary = True
+            grad_norm = None
             if accum_steps > 1:
                 grads, accumulated_count, at_step_boundary = TrainingTrainer._fold_into_window(
                     grads, accumulated_grads, accum_steps, accumulated_count
@@ -212,17 +233,22 @@ class TrainingTrainer:
 
             if at_step_boundary:
                 if max_grad_norm is not None:
-                    grads, _ = clip_grad_norm(grads, max_grad_norm)
+                    grads, grad_norm = clip_grad_norm(grads, max_grad_norm)
+                elif verbose:
+                    grad_norm = TrainingTrainer._grad_norm(grads)
                 training_state.optimizer.optimizer.update(model=adapter.model(), gradients=grads)
-                mx.eval(adapter.model().parameters(), training_state.optimizer.optimizer.state)
+                # grad_norm rides along in the same eval, so reading it later is free.
+                mx.eval(adapter.model().parameters(), training_state.optimizer.optimizer.state, grad_norm)
             else:
                 # Keep the partial sum materialized so the graph doesn't grow across the window.
                 mx.eval(accumulated_grads)
             del grads
+            timings["step"] = time.perf_counter() - started
 
             if training_spec.monitoring is not None:
                 training_state.statistics.append_values(step=training_state.iterator.num_iterations, loss=train_loss)
                 if training_state.should_plot_loss(training_spec):
+                    phase = time.perf_counter()
                     # The batch metric pays an extra forward over up to 10 samples of the
                     # training set: smoother than the per-step series, not held-out signal.
                     validation_batch = training_state.iterator.get_validation_batch()
@@ -231,13 +257,35 @@ class TrainingTrainer:
                     )
                     training_state.statistics.append_batch_values(step=training_state.iterator.num_iterations, loss=float(validation_loss))  # fmt: off
                     del validation_loss
+                    timings["validation"] = time.perf_counter() - phase
                 Plotter.update_loss_plot(training_spec=training_spec, training_state=training_state)
 
             if training_state.should_generate_image(training_spec):
+                phase = time.perf_counter()
                 TrainingTrainer._generate_previews_with_optimizer_offload(adapter, training_spec, training_state)
+                timings["preview"] = time.perf_counter() - phase
 
             if training_state.should_save(training_spec):
+                phase = time.perf_counter()
                 training_state.save(adapter, training_spec)
+                timings["save"] = time.perf_counter() - phase
+                if verbose:
+                    VerboseLog.perturbation(
+                        step=training_state.iterator.num_iterations, transformer=adapter.transformer()
+                    )
+
+            if verbose:
+                VerboseLog.step(
+                    step=training_state.iterator.num_iterations,
+                    loss=train_loss,
+                    batch=batch,
+                    grad_norm=grad_norm,
+                    lr=training_state.optimizer.optimizer.learning_rate if at_step_boundary else None,
+                    timings=timings,
+                )
+                if activation_dtypes is not None:
+                    VerboseLog.activation_dtypes(activation_dtypes)
+                    activation_dtypes = None
 
             if training_spec.low_ram:
                 mx.clear_cache()
@@ -349,6 +397,10 @@ class TrainingTrainer:
         if count >= accum_steps:
             return scaled, 0, True
         return scaled, count, False
+
+    @staticmethod
+    def _grad_norm(grads) -> mx.array:
+        return mx.sqrt(sum(mx.sum(g.astype(mx.float32).square()) for _, g in tree_flatten(grads)))
 
     @staticmethod
     def _step_is_finite(loss) -> bool:

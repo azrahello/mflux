@@ -164,7 +164,8 @@ class TrainingState:
     def should_generate_image(self, training_spec: TrainingSpec) -> bool:
         if training_spec.monitoring is None:
             return False
-        return self.iterator.num_iterations % training_spec.monitoring.generate_image_frequency == 0
+        n = self.iterator.num_iterations
+        return n >= training_spec.monitoring.preview_start and n % training_spec.monitoring.generate_image_frequency == 0
 
     def get_current_preview_image_path(
         self,
