@@ -247,37 +247,7 @@ class LoRALoader:
                 for pattern in target.possible_dora_scale_patterns
             )
 
-            mappings.extend(LoRALoader._diff_pattern_matches(target.possible_diff_patterns, target.model_path))
-
         return mappings
-
-    @staticmethod
-    def _diff_pattern_matches(patterns: list[str], target_path: str) -> list[PatternMatch]:
-        # A raw weight diff has no rank structure. Represent it as an
-        # identity lora_A paired with the diff as lora_B (A @ B == diff.T,
-        # matching what a normal lora_A/lora_B pair would decompose to) so
-        # baking, fusion and scaling reuse the existing LoRALinear path.
-        matches: list[PatternMatch] = []
-        for pattern in patterns:
-            matches.append(
-                PatternMatch(
-                    source_pattern=pattern,
-                    target_path=target_path,
-                    matrix_name="lora_A",
-                    transpose=False,
-                    transform=lambda diff: mx.eye(diff.shape[1]),
-                )
-            )
-            matches.append(
-                PatternMatch(
-                    source_pattern=pattern,
-                    target_path=target_path,
-                    matrix_name="lora_B",
-                    transpose=True,
-                    transform=None,
-                )
-            )
-        return matches
 
     @staticmethod
     def _lokr_factor_pattern_matches(
@@ -387,6 +357,16 @@ class LoRALoader:
                     )
                 lora_data_by_target[target_path][mapping.matrix_name] = transformed_value
 
+        # A matrix .diff is a full weight diff with no rank structure: run it through
+        # LoRALinear as identity lora_A @ diff.T (so roles, bake-free loads and scaling
+        # work). Only vector .diff/.diff_b (norms, biases) take the in-place direct path.
+        for target_path, lora_data in lora_data_by_target.items():
+            diff = lora_data.get("diff")
+            if diff is not None and diff.ndim == 2 and LoRALoader._has_matrix_weight(transformer, target_path):
+                del lora_data["diff"]
+                lora_data["lora_A"] = mx.eye(diff.shape[1])
+                lora_data["lora_B"] = diff.T
+
         # Direct deltas change base weights in place, which neither stripping nor a failed
         # load can undo. Validate them all before touching the model, and write them only
         # once every LoRA target has applied.
@@ -427,6 +407,14 @@ class LoRALoader:
         if isinstance(module, (LoRALinear, LoKrLinear)):
             return module.linear
         return module
+
+    @staticmethod
+    def _has_matrix_weight(transformer: nn.Module, target_path: str) -> bool:
+        try:
+            weight = getattr(LoRALoader._direct_delta_module(transformer, target_path), "weight", None)
+        except (AttributeError, IndexError, KeyError):
+            return False
+        return weight is not None and weight.ndim == 2
 
     @staticmethod
     def _validate_direct_deltas(transformer: nn.Module, target_path: str, lora_data: dict) -> bool:
