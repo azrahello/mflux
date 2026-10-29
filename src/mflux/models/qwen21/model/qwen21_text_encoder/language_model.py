@@ -64,5 +64,6 @@ class LanguageModel(nn.Module):
                 hidden[:, image_indices] += deepstack[index].astype(hidden.dtype)[None]
             if not self.text_mode:
                 mx.eval(hidden)
-        # The edit diffusion checkpoint consumes the last decoder output before final RMSNorm.
-        return self.norm(hidden) if self.text_mode else hidden
+        # Both diffusion checkpoints (t2i and edit) consume the last decoder output before the final
+        # RMSNorm, as the diffusers pipeline does; greedy decoding applies self.norm itself.
+        return hidden
