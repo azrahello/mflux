@@ -276,6 +276,14 @@ class TrainingSpec:
     # it large (ai-toolkit trains Krea 2 Turbo over 1000 levels) while its previews still want
     # the model's native step count. None = use 'steps' for both.
     preview_steps: int | None = None
+    # Krea 2 Raw only: load TheDivergentAI's Turbo-distill LoRA (SVD of W_turbo - W_raw) for the
+    # monitoring previews alone, so Raw previews render at turbo settings (8 steps, CFG off). It is
+    # loaded at the start of each preview and removed after it: the training graph never sees it.
+    distill: bool = False
+    # Krea 2 only: the txtfusion.projector rebalance of mflux-generate-krea2, active while training
+    # and in the previews. Same semantics as --projector-rebalance-weights/-strength.
+    projector_rebalance_weights: str | None = None
+    projector_rebalance_strength: float | None = None
 
     @staticmethod
     def resolve(
@@ -312,6 +320,16 @@ class TrainingSpec:
         preview_steps = None if preview_steps_raw is None else int(preview_steps_raw)
         if preview_steps is not None and preview_steps <= 0:
             raise ValueError("'preview_steps' must be > 0")
+
+        distill = config.get("distill", False)
+        if not isinstance(distill, bool):
+            raise ValueError("'distill' must be true or false")
+
+        projector_rebalance_weights = config.get("projector_rebalance_weights", None)
+        if projector_rebalance_weights is not None and not isinstance(projector_rebalance_weights, str):
+            raise ValueError("'projector_rebalance_weights' must be a string of 12 comma-separated values")
+        projector_strength_raw = config.get("projector_rebalance_strength", None)
+        projector_rebalance_strength = None if projector_strength_raw is None else float(projector_strength_raw)
 
         max_resolution_raw = config.get("max_resolution", None)
         max_resolution = None if max_resolution_raw is None else int(max_resolution_raw)
@@ -487,6 +505,9 @@ class TrainingSpec:
             cache_limit_gb=cache_limit_gb,
             gradient_checkpointing=gradient_checkpointing,
             preview_steps=preview_steps,
+            distill=distill,
+            projector_rebalance_weights=projector_rebalance_weights,
+            projector_rebalance_strength=projector_rebalance_strength,
         )
 
     @staticmethod

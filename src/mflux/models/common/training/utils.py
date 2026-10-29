@@ -6,7 +6,7 @@ from contextlib import contextmanager
 
 from mflux.models.common.lora.layer.fused_linear_lora_layer import FusedLoRALinear
 from mflux.models.common.lora.layer.linear_lora_layer import LoRALinear
-from mflux.models.common.training.lora.path_util import get_at_path
+from mflux.models.common.training.lora.path_util import get_at_path, set_at_path
 
 
 class TrainingUtil:
@@ -32,6 +32,22 @@ class TrainingUtil:
         finally:
             for mod, s in saved_scales:
                 mod.scale = s
+
+    @staticmethod
+    @contextmanager
+    def transient_loras(transformer):
+        # Puts back the exact module objects and parameter arrays on exit, so a LoRA loaded
+        # inside (wrapped, fused or baked into a raw tensor) leaves nothing on the trained graph
+        # and the train LoRA keeps its identity, freeze state and optimizer tree paths.
+        modules = sorted(transformer.named_modules(), key=lambda item: item[0].count("."))
+        params = transformer.parameters()
+        try:
+            yield
+        finally:
+            for path, module in modules:
+                if path and get_at_path(transformer, path) is not module:
+                    set_at_path(transformer, path, module)
+            transformer.update(params)
 
     @staticmethod
     def get_train_lora(transformer, module_path: str) -> LoRALinear:

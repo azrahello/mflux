@@ -27,6 +27,8 @@ class Krea2Initializer:
         lora_paths: list[str] | None = None,
         lora_scales: list[float] | None = None,
         bake_lora: bool = True,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float = 0.05,
     ) -> None:
         path = model_path if model_path else model_config.model_name
         Krea2Initializer._init_config(model, model_config)
@@ -36,8 +38,44 @@ class Krea2Initializer:
         Krea2Initializer._apply_weights(model, weights, quantize)
         Krea2Initializer._apply_lora(model, lora_paths, lora_scales, bake_lora, weights)
         del weights
+        Krea2Initializer._apply_projector_rebalance(model, projector_rebalance_weights, projector_rebalance_strength)
         mx.eval(model)
         mx.clear_cache()
+
+    # The identity-edit recipe of the ComfyUI AzKrea2ProjectorRebalance node.
+    PROJECTOR_REBALANCE_PRESET = (
+        "-24.195,-32.266,92.695,125.977,176.379,98.633,99.555,-359.75,-127.92,-190.32,-152.17,28.199"
+    )
+
+    @staticmethod
+    def projector_rebalance_kwargs(weights: str | None, strength: float | None) -> dict:
+        # Opt-in: explicit weights, or the strength alone selects the preset; strength 0 turns it off.
+        if weights is None and strength:
+            weights = Krea2Initializer.PROJECTOR_REBALANCE_PRESET
+        if not weights or strength == 0:
+            return {}
+        return {
+            "projector_rebalance_weights": weights,
+            "projector_rebalance_strength": 0.05 if strength is None else strength,
+        }
+
+    @staticmethod
+    def _apply_projector_rebalance(model, weights: str | None, strength: float) -> None:
+        # LoRA-style diff on txtfusion.projector, the Linear(12 -> 1) fusing the tapped text-encoder
+        # layers: new_weight = weight + strength * diff. Its 12 input dims fall below the quantization
+        # group size, so the layer is always a plain Linear, even under -q.
+        if not weights:
+            return
+        projector = model.transformer.txtfusion.projector
+        # An unbaked LoRA wraps the projector; patch the base Linear underneath, which the adapters add onto.
+        while not isinstance(projector, nn.Linear):
+            projector = getattr(projector, "base_linear", None) or projector.linear
+        diff = mx.array([float(v) for v in weights.split(",")], dtype=mx.float32).reshape(1, -1)
+        if diff.shape != projector.weight.shape:
+            raise ValueError(
+                f"--projector-rebalance-weights needs {projector.weight.shape[1]} values, got {diff.shape[1]}"
+            )
+        projector.weight = (projector.weight.astype(mx.float32) + strength * diff).astype(projector.weight.dtype)
 
     # The depth checkpoint's deltas, per block: five attention and three MLP projections.
     _CONTROL_TARGETS = ("attn.wq", "attn.wk", "attn.wv", "attn.wo", "attn.gate", "mlp.gate", "mlp.up", "mlp.down")

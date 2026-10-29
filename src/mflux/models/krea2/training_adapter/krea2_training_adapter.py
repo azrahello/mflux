@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from mflux.models.common.lora.mapping.lora_loader import LoRALoader
 from mflux.models.common.training.adapters.base import TrainingAdapter
 from mflux.models.common.training.state.training_spec import TrainingSpec
 from mflux.models.common.training.utils import TrainingUtil
+from mflux.models.krea2.krea2_initializer import Krea2Initializer
 from mflux.models.krea2.latent_creator.krea2_latent_creator import Krea2LatentCreator
 from mflux.models.krea2.model.krea2_text_encoder.prompt_encoder import Krea2PromptEncoder
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
@@ -32,10 +35,27 @@ class Krea2TrainingAdapter(TrainingAdapter):
     the LoRA trains over it (QLoRA); gradient checkpointing keeps the 28-block graph within memory.
     """
 
-    def __init__(self, *, model_config: ModelConfig, quantize: int | None, model_path: str | None = None):
+    _PROJECTOR = "txtfusion.projector"
+
+    def __init__(
+        self,
+        *,
+        model_config: ModelConfig,
+        quantize: int | None,
+        model_path: str | None = None,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float | None = None,
+    ):
         self._model_config = model_config
-        self._krea2 = Krea2(quantize=quantize, model_config=model_config, model_path=model_path)
+        # The rebalance patches the base projector weight, so training and previews both run on it.
+        self._projector_rebalance = Krea2Initializer.projector_rebalance_kwargs(
+            projector_rebalance_weights, projector_rebalance_strength
+        )
+        self._krea2 = Krea2(
+            quantize=quantize, model_config=model_config, model_path=model_path, **self._projector_rebalance
+        )
         self._guidance: float | None = None
+        self._preview_lora_path: str | None = None
 
     def model(self):
         return self._krea2
@@ -115,7 +135,7 @@ class Krea2TrainingAdapter(TrainingAdapter):
         steps: int,
         image_paths: list[Path | str] | None = None,  # txt2img: unused  # noqa: ARG002
     ):
-        with self._assistant_disabled():
+        with self._assistant_disabled(), self._preview_lora():
             return self._krea2.generate_image(
                 seed=seed,
                 prompt=prompt,
@@ -133,13 +153,39 @@ class Krea2TrainingAdapter(TrainingAdapter):
                     self._append_train_lora_weights(weights, target.module_path.format(block=b))
             else:
                 self._append_train_lora_weights(weights, target.module_path)
-        mx.save_safetensors(
-            str(path),
-            weights,
-            metadata={"mflux_version": VersionUtil.get_mflux_version(), "model": training_spec.model},
-        )
+        metadata = {"mflux_version": VersionUtil.get_mflux_version(), "model": training_spec.model}
+        if self._projector_rebalance:
+            # The rebalance as an exact rank-1 LoRA (B @ A = strength * diff, no alpha), so the saved
+            # adapter carries it and inference needs no --projector-rebalance-* flag.
+            weights.update(self._projector_rebalance_lora())
+            metadata["projector_rebalance"] = json.dumps(self._projector_rebalance)
+        mx.save_safetensors(str(path), weights, metadata=metadata)
+
+    def _projector_rebalance_lora(self) -> dict[str, mx.array]:
+        values = self._projector_rebalance["projector_rebalance_weights"].split(",")
+        diff = mx.array([float(v) for v in values], dtype=mx.float32).reshape(1, -1)
+        strength = self._projector_rebalance["projector_rebalance_strength"]
+        return {
+            f"transformer.{self._PROJECTOR}.lora_A.weight": strength * diff,  # [rank=1, in=12]
+            f"transformer.{self._PROJECTOR}.lora_B.weight": mx.ones((1, 1), dtype=mx.float32),  # [out=1, rank=1]
+        }
 
     def load_lora_adapter(self, *, path: str | Path) -> None:
+        if self._projector_rebalance:
+            # Resume: the config re-applies the rebalance to the base, so the rank-1 copy saved in the
+            # adapter is dropped; loading it too would patch the projector twice.
+            weights = {k: v for k, v in mx.load(str(path)).items() if f".{self._PROJECTOR}." not in k}
+            if not weights:
+                return
+            with tempfile.TemporaryDirectory() as tmp:
+                filtered = Path(tmp) / Path(path).name
+                mx.save_safetensors(str(filtered), weights)
+                self._load_train_lora(filtered)
+                mx.eval(self._krea2.transformer.parameters())
+            return
+        self._load_train_lora(path)
+
+    def _load_train_lora(self, path: str | Path) -> None:
         LoRALoader.load_and_apply_lora(
             lora_mapping=Krea2LoRAMapping.get_mapping(),
             transformer=self._krea2.transformer,
@@ -158,6 +204,26 @@ class Krea2TrainingAdapter(TrainingAdapter):
             role="assistant",
             bake_lora=False,
         )
+
+    def set_preview_adapter(self, *, path: str | Path) -> None:
+        # Loaded at the start of every preview and removed after it, never present while training.
+        self._preview_lora_path = str(path)
+
+    @contextmanager
+    def _preview_lora(self):
+        if self._preview_lora_path is None:
+            yield
+            return
+        with TrainingUtil.transient_loras(self._krea2.transformer):
+            LoRALoader.load_and_apply_lora(
+                lora_mapping=Krea2LoRAMapping.get_mapping(),
+                transformer=self._krea2.transformer,
+                lora_paths=[self._preview_lora_path],
+                lora_scales=[1.0],
+                role="preview",
+                bake_lora=False,
+            )
+            yield
 
     def _assistant_disabled(self):
         return TrainingUtil.assistant_disabled(self._krea2.transformer)

@@ -5,6 +5,7 @@ from mflux.callbacks.callback_manager import CallbackManager
 from mflux.cli.parser.parsers import CommandLineParser, lora_init_kwargs_from_args
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.resolution.config_resolution import ConfigResolution
+from mflux.models.krea2.krea2_initializer import Krea2Initializer
 from mflux.models.krea2.latent_creator import Krea2LatentCreator
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
 from mflux.utils.dimension_resolver import DimensionResolver
@@ -37,6 +38,19 @@ def build_parser() -> CommandLineParser:
     parser.add_image_generator_arguments(supports_metadata_config=True, supports_dimension_scale_factor=True)
     parser.add_image_to_image_arguments(required=False)
     parser.add_pid_decode_arguments()
+    projector_group = parser.add_argument_group("Text-fusion projector rebalance")
+    projector_group.add_argument(
+        "--projector-rebalance-weights",
+        type=str,
+        default=None,
+        help="12 comma-separated diffs added to txtfusion.projector (a model patch, not a conditioning scale). Default: no patch; --projector-rebalance-strength alone applies the ComfyUI identity-edit preset.",
+    )
+    projector_group.add_argument(
+        "--projector-rebalance-strength",
+        type=float,
+        default=None,
+        help="Scales the diffs before they are added (default 0.05 when the patch is active; 0 disables it).",
+    )
     parser.add_output_arguments()
     return parser
 
@@ -54,11 +68,15 @@ class Krea2Command:
 
     @staticmethod
     def load(args: Namespace) -> Krea2:
+        projector_kwargs = Krea2Initializer.projector_rebalance_kwargs(
+            getattr(args, "projector_rebalance_weights", None), getattr(args, "projector_rebalance_strength", None)
+        )
         return Krea2(
             model_config=Krea2Command.validate(args),
             quantize=args.quantize,
             model_path=args.model_path,
             **lora_init_kwargs_from_args(args),
+            **projector_kwargs,
         )
 
     @staticmethod

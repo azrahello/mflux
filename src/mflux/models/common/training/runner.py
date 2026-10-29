@@ -35,6 +35,10 @@ class TrainingRunner:
     # Turbo (distilled) models benefit from a training adapter (assistant LoRA).
     ZIMAGE_TURBO_TRAINING_ADAPTER = "ostris/zimage_turbo_training_adapter:zimage_turbo_training_adapter_v2.safetensors"
     KREA2_TURBO_TRAINING_ADAPTER = "ostris/krea2_turbo_training_adapter:krea2_turbo_training_adapter_v1.safetensors"
+    # Raw -> Turbo SVD extract, used only for the previews of a Krea 2 Raw run ('distill': true).
+    KREA2_RAW_PREVIEW_DISTILL = (
+        "TheDivergentAI/Krea2-Turbo-Distill-8step-LoRA:krea2_turbo_distill_8step_r128.safetensors"
+    )
 
     @staticmethod
     def _disable_assistant_loras(transformer) -> None:
@@ -94,6 +98,17 @@ class TrainingRunner:
         is_krea2_turbo = model_config.model_name == ModelConfig.krea2().model_name
         if training_spec.is_edit and not is_flux2_base:
             raise ValueError("Edit training currently supports only FLUX.2-klein-base models.")
+        has_projector_rebalance = (
+            training_spec.projector_rebalance_weights is not None
+            or training_spec.projector_rebalance_strength is not None
+        )
+        if has_projector_rebalance and not is_krea2:
+            raise ValueError("'projector_rebalance_*' is supported only for Krea 2.")
+        # A train LoRA on the projector would learn its way back from the patch it is meant to keep.
+        if has_projector_rebalance and any(
+            t.module_path == "txtfusion.projector" for t in training_spec.lora_layers.targets
+        ):
+            raise ValueError("'projector_rebalance_*' patches txtfusion.projector; drop it from lora_layers.targets.")
         if is_ernie:
             adapter = ErnieTrainingAdapter(
                 model_config=model_config, quantize=training_spec.quantize, model_path=training_spec.model_path
@@ -112,7 +127,11 @@ class TrainingRunner:
             )
         elif is_krea2:
             adapter = Krea2TrainingAdapter(
-                model_config=model_config, quantize=training_spec.quantize, model_path=training_spec.model_path
+                model_config=model_config,
+                quantize=training_spec.quantize,
+                model_path=training_spec.model_path,
+                projector_rebalance_weights=training_spec.projector_rebalance_weights,
+                projector_rebalance_strength=training_spec.projector_rebalance_strength,
             )
         else:
             raise ValueError("Flux1 training is no longer supported.")
@@ -131,6 +150,10 @@ class TrainingRunner:
                 path=TrainingRunner.KREA2_TURBO_TRAINING_ADAPTER,
                 scale=1.0,
             )
+        if training_spec.distill:
+            if model_config.model_name != ModelConfig.krea2_raw().model_name:
+                raise ValueError("'distill' is supported only for krea2-raw.")
+            adapter.set_preview_adapter(path=TrainingRunner.KREA2_RAW_PREVIEW_DISTILL)
 
         # Apply LoRA layers either by loading a saved adapter (resume) or by injecting fresh layers
         if training_spec.lora_layers.state_path is not None:

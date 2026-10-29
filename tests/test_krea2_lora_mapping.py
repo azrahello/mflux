@@ -293,3 +293,14 @@ def test_download_patterns_fetch_root_shards_of_an_mflux_saved_repo():
         "krea/Krea-2-Raw", "krea/Krea-2-Raw"
     ) == Krea2WeightDefinition.get_download_patterns("krea/Krea-2-Raw")
 
+
+def test_projector_rebalance_kwargs_match_the_cli_semantics():
+    from mflux.models.krea2.krea2_initializer import Krea2Initializer
+
+    kwargs = Krea2Initializer.projector_rebalance_kwargs
+    preset = Krea2Initializer.PROJECTOR_REBALANCE_PRESET
+    assert kwargs(None, None) == {}
+    assert kwargs(None, 0.05) == {"projector_rebalance_weights": preset, "projector_rebalance_strength": 0.05}
+    assert kwargs("1,2", None) == {"projector_rebalance_weights": "1,2", "projector_rebalance_strength": 0.05}
+    assert kwargs("1,2", 0) == {}
+    assert kwargs(None, 0) == {}

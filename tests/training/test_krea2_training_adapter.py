@@ -75,3 +75,65 @@ def test_preview_image_uses_training_guidance(monkeypatch):
 
     assert adapter._krea2.last_generate_kwargs is not None
     assert adapter._krea2.last_generate_kwargs["guidance"] == 3.0
+
+
+class _TinyKrea2:
+    # A real (tiny) transformer with the projector rebalance applied as Krea2Initializer does.
+    def __init__(self, *, quantize, model_config, model_path=None, **projector):  # noqa: ARG002
+        from mflux.models.krea2.krea2_initializer import Krea2Initializer
+        from tests.test_krea2_lora_mapping import _tiny_transformer
+
+        self.transformer = _tiny_transformer()
+        self.transformer.txtfusion.projector.weight = mx.arange(1, 13, dtype=mx.float32).reshape(1, 12) / 10
+        if projector:
+            Krea2Initializer._apply_projector_rebalance(
+                self, projector["projector_rebalance_weights"], projector["projector_rebalance_strength"]
+            )
+
+
+@pytest.mark.fast
+def test_saved_adapter_carries_the_projector_rebalance_and_resume_does_not_apply_it_twice(monkeypatch, tmp_path):
+    import json
+
+    from mflux.models.common.lora.mapping.lora_loader import LoRALoader
+    from mflux.models.common.training.lora.target_injector import inject_lora_targets
+    from mflux.models.common.training.state.training_spec import LoraTargetSpec
+    from mflux.models.krea2.weights.krea2_lora_mapping import Krea2LoRAMapping
+
+    monkeypatch.setattr(krea2_adapter_module, "Krea2", _TinyKrea2)
+    adapter = Krea2TrainingAdapter(
+        model_config=ModelConfig.krea2_raw(), quantize=None, projector_rebalance_strength=0.05
+    )
+    patched = adapter.transformer().txtfusion.projector.weight
+    targets = [LoraTargetSpec(module_path="blocks.0.attn.wq", rank=2)]
+    inject_lora_targets(adapter.transformer(), targets)
+    path = tmp_path / "adapter.safetensors"
+    adapter.save_lora_adapter(
+        path=path, training_spec=SimpleNamespace(lora_layers=SimpleNamespace(targets=targets), model="krea-2-raw")
+    )
+
+    weights, metadata = mx.load(str(path), return_metadata=True)
+    assert set(weights) == {
+        "transformer.blocks.0.attn.wq.lora_A.weight",
+        "transformer.blocks.0.attn.wq.lora_B.weight",
+        "transformer.txtfusion.projector.lora_A.weight",
+        "transformer.txtfusion.projector.lora_B.weight",
+    }
+    assert json.loads(metadata["projector_rebalance"])["projector_rebalance_strength"] == 0.05
+
+    # Inference on an unpatched model: loading the adapter alone reproduces the patch exactly.
+    plain = _TinyKrea2(quantize=None, model_config=None).transformer
+    LoRALoader.load_and_apply_lora(Krea2LoRAMapping.get_mapping(), plain, [str(path)], [1.0], bake_lora=True)
+    assert mx.allclose(plain.txtfusion.projector.weight, patched, atol=1e-6).item()
+
+    # Resume: the config re-patches the base, so the saved rank-1 is dropped instead of stacked.
+    resumed = Krea2TrainingAdapter(
+        model_config=ModelConfig.krea2_raw(), quantize=None, projector_rebalance_strength=0.05
+    )
+    resumed.load_lora_adapter(path=path)
+    projector = resumed.transformer().txtfusion.projector
+    assert type(projector).__name__ == "Linear"
+    assert mx.array_equal(projector.weight, patched).item()
+    resumed_wq = resumed.transformer().blocks[0].attn.wq
+    assert type(resumed_wq).__name__ == "LoRALinear"
+    assert mx.array_equal(resumed_wq.lora_A, adapter.transformer().blocks[0].attn.wq.lora_A).item()

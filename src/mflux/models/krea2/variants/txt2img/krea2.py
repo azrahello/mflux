@@ -36,6 +36,8 @@ class Krea2(nn.Module):
         lora_paths: list[str] | None = None,
         lora_scales: list[float] | None = None,
         bake_lora: bool = True,
+        projector_rebalance_weights: str | None = None,
+        projector_rebalance_strength: float = 0.05,
     ):
         super().__init__()
         Krea2Initializer.init(
@@ -46,6 +48,8 @@ class Krea2(nn.Module):
             lora_paths=lora_paths,
             lora_scales=lora_scales,
             bake_lora=bake_lora,
+            projector_rebalance_weights=projector_rebalance_weights,
+            projector_rebalance_strength=projector_rebalance_strength,
         )
 
     def generate_image(
