@@ -277,3 +277,19 @@ def test_zero_match_error_names_the_key_endings(tmp_path):
             _tiny_transformer(), str(lora_file), 1.0, Krea2LoRAMapping.get_mapping(), role=None
         )
     assert "scale.diff" in str(excinfo.value)
+
+
+def test_download_patterns_fetch_root_shards_of_an_mflux_saved_repo():
+    from fnmatch import fnmatch
+
+    from mflux.models.krea2.weights.krea2_weight_definition import Krea2WeightDefinition
+
+    patterns = Krea2WeightDefinition.get_download_patterns("krea/Krea-2-Raw", "mflux-community/krea-2-raw-mflux-bf16")
+    # The saver writes the transformer to the repo root; the official layouts never listed it.
+    assert any(fnmatch("0.safetensors", p) for p in patterns)
+    assert any(fnmatch("model.safetensors.index.json", p) for p in patterns)
+    # Passing the official repo itself keeps the official layout.
+    assert Krea2WeightDefinition.get_download_patterns(
+        "krea/Krea-2-Raw", "krea/Krea-2-Raw"
+    ) == Krea2WeightDefinition.get_download_patterns("krea/Krea-2-Raw")
+

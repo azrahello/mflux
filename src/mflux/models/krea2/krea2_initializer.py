@@ -244,7 +244,7 @@ class Krea2Initializer:
         return WeightLoader.load(
             weight_definition=Krea2WeightDefinition,
             model_path=model_path,
-            download_patterns=Krea2WeightDefinition.get_download_patterns(model_config.model_name),
+            download_patterns=Krea2WeightDefinition.get_download_patterns(model_config.model_name, model_path),
         )
 
     @staticmethod

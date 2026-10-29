@@ -108,7 +108,7 @@ class Krea2WeightDefinition:
         ]
 
     @staticmethod
-    def get_download_patterns(model_name: str | None = None) -> List[str]:
+    def get_download_patterns(model_name: str | None = None, model_path: str | None = None) -> List[str]:
         # VAE + single-file text encoder + tokenizer are shared by both variants.
         shared = [
             "vae/*.safetensors",
@@ -117,6 +117,11 @@ class Krea2WeightDefinition:
             "text_encoder/*.json",
             "tokenizer/**",
         ]
+        # A repo other than the official one is an mflux-saved checkpoint (e.g.
+        # mflux-community/krea-2-raw-mflux-bf16): the saver writes the transformer shards to the
+        # repo root, which neither official layout below lists, so they never downloaded.
+        if model_path is not None and model_path != model_name:
+            return ["*.safetensors", "model.safetensors.index.json", *shared]
         # Krea 2 Raw (krea/Krea-2-Raw) ships ONLY the diffusers-format transformer/ shard dir,
         # there is no single-file native checkpoint, so it must be fetched or the transformer
         # never downloads on a fresh load.

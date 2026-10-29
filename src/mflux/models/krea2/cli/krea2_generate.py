@@ -47,8 +47,10 @@ class Krea2Command:
     @staticmethod
     def validate(args: Namespace) -> ModelConfig:
         # Weight-free: resolves --model against the in-memory registry only. --model accepts
-        # only krea-2 aliases, so a foreign name is never silently run as Krea-2-Turbo.
-        return ConfigResolution.resolve_restricted(args.model, DEFAULT_MODEL, model_path=args.model_path)
+        # only krea-2 / krea-2-raw aliases, so a foreign name is never silently run as Krea-2-Turbo.
+        return ConfigResolution.resolve_restricted(
+            args.model, DEFAULT_MODEL, model_path=args.model_path, extra_keys=("krea-2-raw",)
+        )
 
     @staticmethod
     def load(args: Namespace) -> Krea2:

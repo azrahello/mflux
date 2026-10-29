@@ -210,7 +210,7 @@ def test_main_passes_a_custom_checkpoint_through(monkeypatch):
 def test_main_lets_a_foreign_model_error_escape_without_building_anything(monkeypatch):
     from mflux.utils.exceptions import ModelConfigError
 
-    monkeypatch.setattr(sys, "argv", ["mflux-generate-krea2", "--prompt", "x", "--model", "krea-2-raw"])
+    monkeypatch.setattr(sys, "argv", ["mflux-generate-krea2", "--prompt", "x", "--model", "qwen-image"])
     with pytest.raises(ModelConfigError, match="only accepts the aliases"):
         cli.main()
     assert FakeKrea2.instances == []
@@ -338,17 +338,23 @@ def test_validate_returns_the_krea2_config_without_building_or_reading_files(mon
 def test_validate_rejects_a_foreign_model_and_builds_nothing(monkeypatch):
     from mflux.utils.exceptions import ModelConfigError
 
-    args = args_for(monkeypatch, ["--prompt", "x", "--model", "krea-2-raw"])
+    args = args_for(monkeypatch, ["--prompt", "x", "--model", "qwen-image"])
     with pytest.raises(ModelConfigError, match="only accepts the aliases"):
         cli.Krea2Command.validate(args)
     assert FakeKrea2.instances == []
 
 
 @pytest.mark.fast
+def test_validate_accepts_krea2_raw(monkeypatch):
+    args = args_for(monkeypatch, ["--prompt", "x", "--model", "krea-2-raw"])
+    assert cli.Krea2Command.validate(args) is AVAILABLE_MODELS["krea-2-raw"]
+
+
+@pytest.mark.fast
 def test_load_rejects_a_foreign_model_without_building(monkeypatch):
     from mflux.utils.exceptions import ModelConfigError
 
-    args = args_for(monkeypatch, ["--prompt", "x", "--model", "krea-2-raw"])
+    args = args_for(monkeypatch, ["--prompt", "x", "--model", "qwen-image"])
     with pytest.raises(ModelConfigError, match="only accepts the aliases"):
         cli.Krea2Command.load(args)
     assert FakeKrea2.instances == []
