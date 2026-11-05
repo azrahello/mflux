@@ -29,18 +29,41 @@ class Krea2Initializer:
         bake_lora: bool = True,
         projector_rebalance_weights: str | None = None,
         projector_rebalance_strength: float = 0.05,
+        conditioning_weights: str | None = None,
+        conditioning_clamp: float | None = None,
+        conditioning_multiplier: float = 1.0,
+        conditioning_renormalize: bool = True,
     ) -> None:
         path = model_path if model_path else model_config.model_name
         Krea2Initializer._init_config(model, model_config)
         weights = Krea2Initializer._load_weights(path, model_config)
         Krea2Initializer._init_tokenizers(model, path)
         Krea2Initializer._init_models(model, model_config)
+        Krea2Initializer._set_conditioning_weights(
+            model, conditioning_weights, conditioning_clamp, conditioning_multiplier, conditioning_renormalize
+        )
         Krea2Initializer._apply_weights(model, weights, quantize)
         Krea2Initializer._apply_lora(model, lora_paths, lora_scales, bake_lora, weights)
         del weights
         Krea2Initializer._apply_projector_rebalance(model, projector_rebalance_weights, projector_rebalance_strength)
         mx.eval(model)
         mx.clear_cache()
+
+    # Always-on text-to-image conditioning rebalance (generation, training and previews): the "balanced"
+    # preset of huwhitememes/comfyui-krea2-conditioning, renormalized, multiplier 1, no clamp. "off" disables it.
+    CONDITIONING_WEIGHTS_DEFAULT = "1,1,1,1,1,1,1,2.5,5.0,1.1,4.0,1.0"
+    CONDITIONING_CLAMP_DEFAULT = 0.0
+
+    @staticmethod
+    def _set_conditioning_weights(
+        model, weights: str | None, clamp: float | None, multiplier: float = 1.0, renormalize: bool = True
+    ) -> None:
+        if weights is None:
+            weights = Krea2Initializer.CONDITIONING_WEIGHTS_DEFAULT
+        model.text_encoder.conditioning_weights = None if weights.strip().lower() == "off" else weights
+        model.text_encoder.conditioning_clamp = Krea2Initializer.CONDITIONING_CLAMP_DEFAULT if clamp is None else clamp
+        model.text_encoder.conditioning_multiplier = multiplier
+        model.text_encoder.conditioning_renormalize = renormalize
 
     # The identity-edit recipe of the ComfyUI AzKrea2ProjectorRebalance node.
     PROJECTOR_REBALANCE_PRESET = (

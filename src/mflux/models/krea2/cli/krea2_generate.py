@@ -1,5 +1,5 @@
 import warnings
-from argparse import Namespace
+from argparse import BooleanOptionalAction, Namespace
 
 from mflux.callbacks.callback_manager import CallbackManager
 from mflux.cli.parser.parsers import CommandLineParser, lora_init_kwargs_from_args
@@ -51,6 +51,31 @@ def build_parser() -> CommandLineParser:
         default=None,
         help="Scales the diffs before they are added (default 0.05 when the patch is active; 0 disables it).",
     )
+    conditioning_group = parser.add_argument_group("Conditioning rebalance")
+    conditioning_group.add_argument(
+        "--conditioning-weights",
+        type=str,
+        default=None,
+        help=f"12 comma-separated gains on the tapped text-encoder layers, or 'off'. Default: {Krea2Initializer.CONDITIONING_WEIGHTS_DEFAULT} (also used in training).",
+    )
+    conditioning_group.add_argument(
+        "--conditioning-clamp",
+        type=float,
+        default=None,
+        help="Optional abs clamp after the gains and multiplier, against the attention-sink NaN on raw boosts (default 0 = off).",
+    )
+    conditioning_group.add_argument(
+        "--conditioning-multiplier",
+        type=float,
+        default=1.0,
+        help="Global gain on all 12 taps, applied after the renormalize (default 1; artifacts past ~2-3).",
+    )
+    conditioning_group.add_argument(
+        "--conditioning-renormalize",
+        action=BooleanOptionalAction,
+        default=True,
+        help="Rescale the weighted conditioning back to its original RMS, as the ComfyUI node does (default: on).",
+    )
     parser.add_output_arguments()
     return parser
 
@@ -77,6 +102,10 @@ class Krea2Command:
             model_path=args.model_path,
             **lora_init_kwargs_from_args(args),
             **projector_kwargs,
+            conditioning_weights=getattr(args, "conditioning_weights", None),
+            conditioning_clamp=getattr(args, "conditioning_clamp", None),
+            conditioning_multiplier=getattr(args, "conditioning_multiplier", 1.0),
+            conditioning_renormalize=getattr(args, "conditioning_renormalize", True),
         )
 
     @staticmethod

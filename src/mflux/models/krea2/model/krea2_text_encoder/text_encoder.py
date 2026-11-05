@@ -37,6 +37,12 @@ class Krea2TextEncoder(nn.Module):
     ):
         super().__init__()
         self.hidden_size = hidden_size
+        # Per-tap gains (comma-separated str, one per tap layer) and abs clamp, set by Krea2Initializer.
+        # A str, not an array, so they never become parameters.
+        self.conditioning_weights: str | None = None
+        self.conditioning_clamp: float = 0.0
+        self.conditioning_multiplier: float = 1.0
+        self.conditioning_renormalize: bool = True
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
         self.layers = [
             Qwen3VLDecoderLayer(
@@ -106,12 +112,47 @@ class Krea2TextEncoder(nn.Module):
         # Layer-major flatten: stack taps -> (B, seq, n, h) -> (B, seq, n*h)
         hidden_states_list = self(input_ids, attention_mask)
         stacked = mx.stack([hidden_states_list[i] for i in tap_layers], axis=2)
-        b, s, n, h = stacked.shape
-        embeds = stacked.reshape(b, s, n * h)
         # Strip the system + user-opening chat-template prefix from the conditioning
         # (matches ComfyUI), so only the actual prompt tokens onward condition the DiT.
         end = Krea2TextEncoder._template_end(input_ids)
-        return embeds[:, end:, :]
+        stacked = stacked[:, end:]
+        if self.conditioning_weights:
+            # After the strip: the renormalize RMS is over the conditioning ComfyUI sees.
+            stacked = Krea2TextEncoder._scale_taps(
+                stacked,
+                self.conditioning_weights,
+                clamp=self.conditioning_clamp,
+                multiplier=self.conditioning_multiplier,
+                renormalize=self.conditioning_renormalize,
+            )
+        b, s, n, h = stacked.shape
+        return stacked.reshape(b, s, n * h)
+
+    @staticmethod
+    def _scale_taps(
+        stacked: mx.array,
+        weights: str,
+        clamp: float = 0.0,
+        multiplier: float = 1.0,
+        renormalize: bool = True,
+    ) -> mx.array:
+        # The ComfyUI conditioning rebalance (huwhitememes/comfyui-krea2-conditioning, _scale_cond_tensor):
+        # gain per tapped layer, renormalize to the input's whole-tensor RMS (per batch item), then the global
+        # multiplier. The optional clamp (not in the node) caps the attention-sink token on raw boosts.
+        gains = [float(v) for v in weights.split(",")]
+        if len(gains) != stacked.shape[2]:
+            raise ValueError(f"conditioning weights need {stacked.shape[2]} values, got {len(gains)}")
+        x = stacked.astype(mx.float32)  # fp32 like the node
+        axes = tuple(range(1, x.ndim))
+        scaled = x * mx.array(gains, dtype=mx.float32)[:, None]
+        if renormalize:
+            ref_rms = mx.sqrt(mx.mean(x * x, axis=axes, keepdims=True))
+            new_rms = mx.maximum(mx.sqrt(mx.mean(scaled * scaled, axis=axes, keepdims=True)), 1e-8)
+            scaled = scaled * (ref_rms / new_rms)
+        scaled = scaled * multiplier
+        if clamp > 0:
+            scaled = mx.clip(scaled, -clamp, clamp)
+        return scaled.astype(stacked.dtype)
 
     @staticmethod
     def _template_end(input_ids: mx.array) -> int:

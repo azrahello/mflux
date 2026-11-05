@@ -38,6 +38,10 @@ class Krea2(nn.Module):
         bake_lora: bool = True,
         projector_rebalance_weights: str | None = None,
         projector_rebalance_strength: float = 0.05,
+        conditioning_weights: str | None = None,
+        conditioning_clamp: float | None = None,
+        conditioning_multiplier: float = 1.0,
+        conditioning_renormalize: bool = True,
     ):
         super().__init__()
         Krea2Initializer.init(
@@ -50,6 +54,10 @@ class Krea2(nn.Module):
             bake_lora=bake_lora,
             projector_rebalance_weights=projector_rebalance_weights,
             projector_rebalance_strength=projector_rebalance_strength,
+            conditioning_weights=conditioning_weights,
+            conditioning_clamp=conditioning_clamp,
+            conditioning_multiplier=conditioning_multiplier,
+            conditioning_renormalize=conditioning_renormalize,
         )
 
     def generate_image(

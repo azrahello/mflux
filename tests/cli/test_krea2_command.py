@@ -106,6 +106,10 @@ def test_main_call_sequence_is_pinned(monkeypatch, tmp_path, ref_png, lora_file,
         "lora_paths": [str(lora_file)],
         "lora_scales": [0.5],
         "bake_lora": False,
+        "conditioning_weights": None,
+        "conditioning_clamp": None,
+        "conditioning_multiplier": 1.0,
+        "conditioning_renormalize": True,
     }
     assert model.generate_calls == [expected_generate_call(7, ref_png), expected_generate_call(8, ref_png)]
     # With more than one seed parse_args renames --output to <stem>_seed_{seed}; that
